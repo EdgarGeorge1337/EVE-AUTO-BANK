@@ -272,6 +272,21 @@ npm run lint
 
 ---
 
+## Contributors & Acknowledgements
+
+Special thanks to the following projects and individuals who made this possible:
+
+### [Janice — EVE Online Asset Appraisal API](https://janice.e-351.com)
+
+Asset appraisal and market pricing is powered by **Janice**, a space junk worth evaluator API for EVE Online, providing real-time Jita 4-4 market data for item valuation.
+
+- **Project**: [janice.e-351.com](https://janice.e-351.com)
+- **Support Janice**: [janice.e-351.com/about](https://janice.e-351.com/about)
+
+If you use this project and find Janice useful, consider supporting their continued development.
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
