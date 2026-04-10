@@ -1,0 +1,15 @@
+[Unit]
+Description=EVE Auto Bank Next.js App
+After=network.target
+
+[Service]
+Type=simple
+User=consortium
+WorkingDirectory=/home/consortium/EVE-AUTO-BANK
+EnvironmentFile=/home/consortium/EVE-AUTO-BANK/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

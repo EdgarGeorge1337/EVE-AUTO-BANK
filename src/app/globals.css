@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0e1a;
+  --foreground: #e2e8f0;
+  --card: #111827;
+  --card-foreground: #e2e8f0;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #1e293b;
+  --secondary-foreground: #94a3b8;
+  --muted: #1e293b;
+  --muted-foreground: #64748b;
+  --accent: #f59e0b;
+  --accent-foreground: #0a0e1a;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #3b82f6;
+  --radius: 0.5rem;
+  --eve-gold: #f59e0b;
+  --eve-blue: #3b82f6;
+  --eve-dark: #0a0e1a;
+}
+
+* {
+  border-color: var(--border);
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.eve-card {
+  background: var(--card);
+  border: 1px solid #1e293b;
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.eve-badge-basic { background: #374151; color: #9ca3af; }
+.eve-badge-standard { background: #1e3a5f; color: #60a5fa; }
+.eve-badge-advanced { background: #14532d; color: #4ade80; }
+.eve-badge-premium { background: #78350f; color: #fbbf24; }
+
+.status-pending { color: #fbbf24; }
+.status-approved { color: #60a5fa; }
+.status-active { color: #4ade80; }
+.status-overdue { color: #fb923c; }
+.status-defaulted { color: #f87171; }
+.status-completed { color: #a3e635; }
+.status-cancelled { color: #94a3b8; }

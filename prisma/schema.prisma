@@ -1,0 +1,259 @@
+// EVE Auto Bank - Prisma Schema
+// PLEX-secured lending system for EVE Online
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AUTH / USER MODELS
+// ============================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+
+  character Character?
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================
+// EVE CHARACTER
+// ============================================================
+
+model Character {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  characterId     Int      @unique
+  characterName   String
+  corporationId   Int?
+  allianceId      Int?
+  accessToken     String?
+  refreshToken    String?
+  tokenExpiry     DateTime?
+  scopes          String?  // space-separated ESI scopes
+  isAdmin         Boolean  @default(false)
+  creditScore     Int      @default(500)
+  trustTier       String   @default("BASIC") // BASIC | STANDARD | ADVANCED | PREMIUM
+  totalLoans      Int      @default(0)
+  totalRepaid     Int      @default(0)
+  totalDefaulted  Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loans    Loan[]
+  payments Payment[]
+  auditLogs AuditLog[]
+}
+
+// ============================================================
+// LOAN MODELS
+// ============================================================
+
+model Loan {
+  id          String   @id @default(cuid())
+  characterId String
+
+  // Loan terms
+  principalAmount   Float
+  interestRate      Float    // e.g. 0.08 = 8%
+  termDays          Int
+  dueDate           DateTime
+  finalPaymentDate  DateTime?
+
+  // Status
+  status            LoanStatus @default(PENDING)
+  approvalReason    String?
+  autoApprovalEligible Boolean @default(false)
+
+  // Collateral (PLEX)
+  collateralPlexQty     Int
+  collateralPlexValue   Float    // value at time of loan
+  collateralContractId  String?  // ESI contract ID
+  returnContractId      String?  // contract ID for returning PLEX
+  ltvRatio              Float    // loan-to-value ratio
+
+  // Insurance
+  hasInsurance      Boolean  @default(false)
+
+  // Tracking
+  amountRepaid          Float    @default(0)
+  nextPaymentDue        DateTime?
+  overdueAt             DateTime?
+  defaultedAt           DateTime?
+  collateralLiquidatedAt    DateTime?
+  collateralLiquidatedValue Float?
+  cancelledAt           DateTime?
+  completedAt           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  character   Character      @relation(fields: [characterId], references: [id])
+  payments    Payment[]
+  insurance   LoanInsurance?
+  auditLogs   AuditLog[]
+
+  @@index([characterId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  OVERDUE
+  DEFAULTED
+  COMPLETED
+  CANCELLED
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  loanId      String
+  characterId String
+
+  amount        Float
+  type          PaymentType @default(REGULAR)
+
+  // ESI verification
+  esiTransactionId String?
+  journalRefId     String?
+  verified         Boolean @default(false)
+
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  loan      Loan      @relation(fields: [loanId], references: [id])
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@index([loanId])
+  @@index([characterId])
+  @@index([esiTransactionId])
+}
+
+enum PaymentType {
+  REGULAR
+  EARLY
+  PARTIAL
+  INSURANCE_CLAIM
+  COLLATERAL_LIQUIDATION
+}
+
+model LoanInsurance {
+  id     String @id @default(cuid())
+  loanId String @unique
+
+  premiumAmount    Float
+  coveragePercent  Float  // e.g. 0.80 = 80%
+  claimable        Boolean @default(true)
+  claimedAt        DateTime?
+  claimAmount      Float?
+
+  createdAt DateTime @default(now())
+
+  loan Loan @relation(fields: [loanId], references: [id])
+}
+
+// ============================================================
+// AUDIT & MONITORING
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  loanId      String?
+  characterId String?
+
+  action      String
+  description String
+  metadata    String?  // JSON string
+
+  createdAt DateTime @default(now())
+
+  loan      Loan?      @relation(fields: [loanId], references: [id])
+  character Character? @relation(fields: [characterId], references: [id])
+
+  @@index([loanId])
+  @@index([characterId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model PlexPriceCache {
+  id        String   @id @default(cuid())
+  price     Float
+  region    String   @default("10000002") // The Forge / Jita
+  source    String   @default("ESI")
+  fetchedAt DateTime @default(now())
+
+  @@index([fetchedAt])
+}
+
+model BankConfig {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// Stores the bank character's ESI tokens from App 2 (admin API app)
+// One row — the bank character. Updated on every refresh.
+model BankToken {
+  id           String   @id @default(cuid())
+  characterId  Int      @unique
+  characterName String
+  accessToken  String
+  refreshToken String
+  tokenExpiry  DateTime
+  scopes       String   // space-separated, for reference
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
