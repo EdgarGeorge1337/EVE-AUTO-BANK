@@ -1,19 +1,20 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
+import { appraiseItems } from '@/lib/janice';
 
 async function getPublicStats() {
-  const [totalLoans, activeLoans, totalVolume, plexPrice] = await Promise.all([
+  const [totalLoans, activeLoans, totalVolume, janiceResult] = await Promise.all([
     db.loan.count({ where: { status: { in: ['COMPLETED', 'ACTIVE'] } } }),
     db.loan.count({ where: { status: 'ACTIVE' } }),
     db.loan.aggregate({ _sum: { principalAmount: true }, where: { status: { in: ['ACTIVE', 'COMPLETED'] } } }),
-    db.plexPriceCache.findFirst({ orderBy: { fetchedAt: 'desc' } }),
+    appraiseItems([{ typeName: 'PLEX', qty: 1 }]).catch(() => null),
   ]);
 
   return {
     totalLoans,
     activeLoans,
     totalVolume: totalVolume._sum.principalAmount ?? 0,
-    plexPrice: plexPrice?.price ?? null,
+    plexPrice: janiceResult?.items[0]?.unitPrice ?? null,
   };
 }
 

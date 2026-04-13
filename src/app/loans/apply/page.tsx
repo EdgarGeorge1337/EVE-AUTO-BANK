@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -14,6 +14,19 @@ interface BankDefaults {
   insuranceCoverage: number;
 }
 
+interface AppraisalItem {
+  name: string;
+  typeId: number;
+  qty: number;
+  unitPrice: number;
+  totalValue: number;
+}
+
+interface AppraisalResult {
+  items: AppraisalItem[];
+  totalValue: number;
+}
+
 function formatISK(n: number) {
   if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T ISK`;
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B ISK`;
@@ -21,18 +34,28 @@ function formatISK(n: number) {
   return `${n.toLocaleString()} ISK`;
 }
 
+type CollateralMode = 'plex' | 'multi';
+
 export default function LoanApplyPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
   const [defaults, setDefaults] = useState<BankDefaults | null>(null);
   const [plexPrice, setPlexPrice] = useState<number | null>(null);
+  const [collateralMode, setCollateralMode] = useState<CollateralMode>('plex');
 
+  // PLEX mode state
   const [principalAmount, setPrincipalAmount] = useState('');
   const [plexQty, setPlexQty] = useState('');
+
+  // Multi-item mode state
+  const [itemText, setItemText] = useState('');
+  const [appraisal, setAppraisal] = useState<AppraisalResult | null>(null);
+  const [appraising, setAppraising] = useState(false);
+  const [appraisalError, setAppraisalError] = useState('');
+
   const [termDays, setTermDays] = useState(30);
   const [wantsInsurance, setWantsInsurance] = useState(false);
-
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,13 +71,45 @@ export default function LoanApplyPage() {
 
   const principal = parseFloat(principalAmount) || 0;
   const qty = parseInt(plexQty) || 0;
-  const collateralValue = plexPrice ? plexPrice * qty : 0;
-  const ltv = collateralValue > 0 ? principal / collateralValue : 0;
+  const maxLtv = defaults?.maxLtvRatio ?? 0.70;
   const interestRate = defaults?.interestRate ?? 0.08;
+
+  // Collateral value depends on mode
+  const collateralValue =
+    collateralMode === 'plex'
+      ? (plexPrice ? plexPrice * qty : 0)
+      : (appraisal?.totalValue ?? 0);
+
+  const ltv = collateralValue > 0 ? principal / collateralValue : 0;
   const totalRepayment = principal * (1 + interestRate);
   const insurancePremium = wantsInsurance ? principal * (defaults?.insuranceRate ?? 0.02) : 0;
-  const maxLtv = defaults?.maxLtvRatio ?? 0.70;
   const ltvOk = ltv > 0 && ltv <= maxLtv;
+
+  const handleAppraise = useCallback(async () => {
+    const text = itemText.trim();
+    if (!text) return;
+    setAppraising(true);
+    setAppraisalError('');
+    setAppraisal(null);
+
+    try {
+      const res = await fetch('/api/loans/appraise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawText: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAppraisalError(data.error ?? 'Appraisal failed');
+      } else {
+        setAppraisal(data as AppraisalResult);
+      }
+    } catch {
+      setAppraisalError('Network error. Please try again.');
+    } finally {
+      setAppraising(false);
+    }
+  }, [itemText]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -63,10 +118,28 @@ export default function LoanApplyPage() {
     setError('');
 
     try {
+      let body: Record<string, unknown>;
+
+      if (collateralMode === 'plex') {
+        body = { principalAmount: principal, plexQty: qty, termDays, wantsInsurance };
+      } else {
+        if (!appraisal || appraisal.items.length === 0) {
+          setError('Please appraise your items first.');
+          setSubmitting(false);
+          return;
+        }
+        body = {
+          principalAmount: principal,
+          collateralItems: appraisal.items.map((i) => ({ typeName: i.name, qty: i.qty })),
+          termDays,
+          wantsInsurance,
+        };
+      }
+
       const res = await fetch('/api/loans/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ principalAmount: principal, plexQty: qty, termDays, wantsInsurance }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -121,31 +194,115 @@ export default function LoanApplyPage() {
           </div>
         </div>
 
-        {/* Collateral */}
+        {/* Collateral mode toggle */}
         <div className="eve-card space-y-4">
-          <h2 className="font-semibold text-white">PLEX Collateral</h2>
-          {plexPrice && (
-            <div className="text-sm text-slate-400">
-              Current PLEX price: <span className="text-amber-400 font-semibold">{formatISK(plexPrice)}</span>
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-white">Collateral</h2>
+            <div className="flex bg-slate-800 rounded-lg p-1 gap-1">
+              <button
+                type="button"
+                onClick={() => setCollateralMode('plex')}
+                className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                  collateralMode === 'plex'
+                    ? 'bg-amber-500 text-slate-900'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                PLEX
+              </button>
+              <button
+                type="button"
+                onClick={() => setCollateralMode('multi')}
+                className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                  collateralMode === 'multi'
+                    ? 'bg-amber-500 text-slate-900'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Multi-Item
+              </button>
             </div>
-          )}
-          <div>
-            <label className="text-sm text-slate-400 block mb-1">PLEX Quantity</label>
-            <input
-              type="number"
-              value={plexQty}
-              onChange={(e) => setPlexQty(e.target.value)}
-              placeholder="e.g. 500"
-              className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:border-blue-500 outline-none"
-              required
-              min={1}
-            />
-            {qty > 0 && plexPrice && (
-              <div className="text-xs text-slate-400 mt-1">
-                Collateral value: {formatISK(collateralValue)}
-              </div>
-            )}
           </div>
+
+          {collateralMode === 'plex' ? (
+            <>
+              {plexPrice && (
+                <div className="text-sm text-slate-400">
+                  Current PLEX price: <span className="text-amber-400 font-semibold">{formatISK(plexPrice)}</span>
+                  <span className="text-xs text-slate-500 ml-1">(Janice / Jita 4-4)</span>
+                </div>
+              )}
+              <div>
+                <label className="text-sm text-slate-400 block mb-1">PLEX Quantity</label>
+                <input
+                  type="number"
+                  value={plexQty}
+                  onChange={(e) => setPlexQty(e.target.value)}
+                  placeholder="e.g. 500"
+                  className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:border-blue-500 outline-none"
+                  required={collateralMode === 'plex'}
+                  min={1}
+                />
+                {qty > 0 && plexPrice && (
+                  <div className="text-xs text-slate-400 mt-1">
+                    Collateral value: {formatISK(collateralValue)}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-sm text-slate-400">
+                Paste items in format <code className="text-amber-400">500 PLEX</code> — one per line.
+                Priced via <span className="text-slate-300">Janice</span> (Jita 4-4 split price).
+              </div>
+              <div>
+                <textarea
+                  value={itemText}
+                  onChange={(e) => { setItemText(e.target.value); setAppraisal(null); }}
+                  placeholder={'500 PLEX\n1000000 Tritanium\n50 Compressed Spodumain'}
+                  rows={5}
+                  className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-white placeholder-slate-500 focus:border-amber-500 outline-none font-mono text-sm resize-y"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleAppraise}
+                disabled={appraising || !itemText.trim()}
+                className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:cursor-not-allowed text-white px-4 py-2 rounded text-sm transition-colors"
+              >
+                {appraising ? 'Appraising...' : 'Get Appraisal'}
+              </button>
+
+              {appraisalError && (
+                <div className="text-sm text-red-400">{appraisalError}</div>
+              )}
+
+              {appraisal && (
+                <div className="space-y-2">
+                  <div className="text-sm text-slate-400">
+                    {appraisal.items.length} item{appraisal.items.length !== 1 ? 's' : ''} appraised
+                  </div>
+                  <table className="w-full text-sm">
+                    <tbody className="divide-y divide-slate-800">
+                      {appraisal.items.map((item) => (
+                        <tr key={item.typeId} className="text-slate-300">
+                          <td className="py-1">{item.name} ×{item.qty.toLocaleString()}</td>
+                          <td className="py-1 text-right font-semibold text-white">{formatISK(item.totalValue)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-slate-600">
+                        <td className="pt-2 text-slate-400 font-semibold">Total Collateral</td>
+                        <td className="pt-2 text-right font-bold text-amber-400">{formatISK(appraisal.totalValue)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
 
           {/* LTV Indicator */}
           {ltv > 0 && (
@@ -164,7 +321,7 @@ export default function LoanApplyPage() {
               </div>
               {ltv > maxLtv && (
                 <div className="text-xs text-red-400">
-                  Increase PLEX quantity or reduce loan amount to meet LTV requirements.
+                  Increase collateral or reduce loan amount to meet LTV requirements.
                 </div>
               )}
             </div>
@@ -220,7 +377,7 @@ export default function LoanApplyPage() {
         <div className="flex gap-4">
           <button
             type="submit"
-            disabled={!ltvOk || submitting}
+            disabled={!ltvOk || submitting || (collateralMode === 'multi' && !appraisal)}
             className="flex-1 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-600 disabled:cursor-not-allowed text-slate-900 font-bold py-3 rounded-lg transition-colors"
           >
             {submitting ? 'Submitting...' : 'Submit Application'}

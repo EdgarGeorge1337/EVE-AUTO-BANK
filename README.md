@@ -29,8 +29,8 @@ A PLEX-secured ISK lending platform for EVE Online. Borrowers apply for loans, s
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/eve-auto-bank.git
-cd eve-auto-bank
+git clone https://github.com/EdgarGeorge1337/EVE-AUTO-BANK.git
+cd EVE-AUTO-BANK
 
 # Install dependencies
 npm install
@@ -267,8 +267,8 @@ curl http://localhost:3000/api/health
 
 ```bash
 # Fork and clone
-git clone https://github.com/your-username/eve-auto-bank.git
-cd eve-auto-bank
+git clone https://github.com/EdgarGeorge1337/EVE-AUTO-BANK.git
+cd EVE-AUTO-BANK
 
 # Install dependencies
 npm install
@@ -324,8 +324,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ### Support Channels
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/eve-auto-bank/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/eve-auto-bank/discussions)
+- **Issues**: [GitHub Issues](https://github.com/EdgarGeorge1337/EVE-AUTO-BANK/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/EdgarGeorge1337/EVE-AUTO-BANK/discussions)
 - **Contact**: support@evebank.com
 
 ---

@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getBankStats } from '@/lib/loans';
 import { getBankTokenStatus } from '@/lib/auth-admin';
+import { AppraisalTool } from '@/components/appraisal-tool';
+import { ActionQueue } from '@/components/action-queue';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -27,7 +29,8 @@ export default async function AdminPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.isAdmin) redirect('/dashboard');
 
-  const [stats, bankTokenStatus, pendingLoans, overdueLoans, recentLogs] = await Promise.all([
+  const [stats, bankTokenStatus, pendingLoans, overdueLoans, recentLogs,
+    approvedNoCollateral, activeNoIsk, completedNoReturn] = await Promise.all([
     getBankStats(),
     getBankTokenStatus(),
     db.loan.findMany({
@@ -47,7 +50,40 @@ export default async function AdminPage() {
         character: { select: { characterName: true } },
       },
     }),
+    db.loan.findMany({ where: { status: 'APPROVED', collateralContractId: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'ACTIVE', iskSentAt: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true }, orderBy: { completedAt: 'asc' } }),
   ]);
+
+  const queueActions = [
+    ...approvedNoCollateral.map((loan) => ({
+      type: 'ACCEPT_COLLATERAL_CONTRACT' as const,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.collateralPlexQty,
+      description: `Accept contract from ${loan.character.characterName} for ${loan.collateralPlexQty} PLEX`,
+      createdAt: loan.updatedAt.toISOString(),
+    })),
+    ...activeNoIsk.map((loan) => ({
+      type: 'SEND_ISK' as const,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.principalAmount,
+      description: `Send ${loan.principalAmount.toLocaleString()} ISK to ${loan.character.characterName}`,
+      createdAt: loan.updatedAt.toISOString(),
+    })),
+    ...completedNoReturn.map((loan) => ({
+      type: 'RETURN_COLLATERAL' as const,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.collateralPlexQty,
+      description: `Return ${loan.collateralPlexQty} PLEX to ${loan.character.characterName}`,
+      createdAt: loan.completedAt?.toISOString() ?? loan.updatedAt.toISOString(),
+    })),
+  ];
 
   return (
     <div className="space-y-8">
@@ -61,6 +97,19 @@ export default async function AdminPage() {
             Run Monitoring Cycle
           </button>
         </form>
+      </div>
+
+      {/* Action Queue */}
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+          Today&apos;s Actions
+          {queueActions.length > 0 && (
+            <span className="text-sm bg-red-500/20 text-red-400 px-2 py-0.5 rounded">
+              {queueActions.length} pending
+            </span>
+          )}
+        </h2>
+        <ActionQueue initialActions={queueActions} />
       </div>
 
       {/* Stats */}
@@ -187,6 +236,14 @@ export default async function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* Janice Appraisal Tool */}
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold text-white">Asset Appraisal</h2>
+        <div className="eve-card">
+          <AppraisalTool endpoint="/api/admin/appraise" />
+        </div>
+      </div>
 
       {/* Recent Activity */}
       <div className="space-y-3">
