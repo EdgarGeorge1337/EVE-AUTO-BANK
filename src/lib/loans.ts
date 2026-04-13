@@ -2,6 +2,7 @@
 
 import { db } from '@/lib/db';
 import { appraisePlexValue } from '@/lib/esi';
+import { recalculateAndSave } from '@/lib/credit-score';
 
 const DEFAULT_INTEREST_RATE = parseFloat(process.env.BASE_INTEREST_RATE ?? '0.08');
 const DEFAULT_TERM_DAYS = parseInt(process.env.LOAN_TERM_DAYS ?? '30');
@@ -260,26 +261,14 @@ export async function processPayment(
   if (isComplete) {
     await db.character.update({
       where: { id: loan.characterId },
-      data: {
-        totalRepaid: { increment: 1 },
-        creditScore: { increment: 25 },
-        trustTier: await calculateTrustTier(loan.characterId),
-      },
+      data: { totalRepaid: { increment: 1 } },
     });
+    await recalculateAndSave(loan.characterId);
   }
 
   return { success: true, completed: isComplete };
 }
 
-async function calculateTrustTier(characterId: string): Promise<string> {
-  const character = await db.character.findUnique({ where: { id: characterId } });
-  if (!character) return 'BASIC';
-  const { creditScore } = character;
-  if (creditScore >= 800) return 'PREMIUM';
-  if (creditScore >= 700) return 'ADVANCED';
-  if (creditScore >= 600) return 'STANDARD';
-  return 'BASIC';
-}
 
 export async function getBankStats() {
   const [totalLoans, activeLoans, totalVolume, defaulted] = await Promise.all([

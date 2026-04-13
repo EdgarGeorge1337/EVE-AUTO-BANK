@@ -3,6 +3,8 @@ import { authOptions } from '@/lib/auth-customer';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { appraiseItems } from '@/lib/janice';
+import { calculateCreditScore } from '@/lib/credit-score';
+import { CreditScoreCard } from '@/components/credit-score-card';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -53,6 +55,8 @@ export default async function DashboardPage() {
   const activeLoan = character.loans.find((l) =>
     ['PENDING', 'APPROVED', 'ACTIVE', 'OVERDUE'].includes(l.status)
   );
+
+  const creditResult = await calculateCreditScore(character.id);
 
   // Fetch live PLEX price for collateral health
   const plexResult = activeLoan?.collateralPlexQty
@@ -118,6 +122,15 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* Credit Score */}
+      <CreditScoreCard
+        score={creditResult.total}
+        tier={creditResult.tier}
+        components={creditResult.components}
+        autoApprovalEligible={creditResult.autoApprovalEligible}
+        maxLoanMultiplier={creditResult.maxLoanMultiplier}
+      />
 
       {/* Active Loan */}
       {activeLoan && (
