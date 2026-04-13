@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-customer';
 import { redirect, notFound } from 'next/navigation';
 import { db } from '@/lib/db';
+import { appraiseItems } from '@/lib/janice';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -48,6 +49,11 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
   const remaining = totalDue - loan.amountRepaid;
   const progress = Math.min((loan.amountRepaid / totalDue) * 100, 100);
   const bankCharName = process.env.ADMIN_CHARACTER_NAME ?? 'Bank Character';
+
+  const plexResult = await appraiseItems([{ typeName: 'PLEX', qty: loan.collateralPlexQty }]).catch(() => null);
+  const liveCollateralValue = plexResult?.totalValue ?? null;
+  const liveLtv = liveCollateralValue ? loan.principalAmount / liveCollateralValue : null;
+  const daysLeft = Math.ceil((new Date(loan.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -123,6 +129,40 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
         )}
       </div>
 
+      {/* Live collateral health */}
+      {['ACTIVE', 'OVERDUE', 'APPROVED'].includes(loan.status) && liveCollateralValue && liveLtv && (
+        <div className="eve-card space-y-3">
+          <h2 className="font-semibold text-white">Live Collateral Status</h2>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <div className="text-slate-400">Current PLEX Value</div>
+              <div className="text-white font-semibold">
+                {liveCollateralValue >= 1e9
+                  ? `${(liveCollateralValue / 1e9).toFixed(2)}B ISK`
+                  : `${(liveCollateralValue / 1e6).toFixed(0)}M ISK`}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Current LTV</div>
+              <div className={`font-semibold ${liveLtv > 0.85 ? 'text-red-400' : liveLtv > 0.70 ? 'text-orange-400' : 'text-green-400'}`}>
+                {(liveLtv * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Days Remaining</div>
+              <div className={`font-semibold ${daysLeft < 0 ? 'text-red-400' : daysLeft <= 7 ? 'text-orange-400' : 'text-white'}`}>
+                {daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : `${daysLeft}d`}
+              </div>
+            </div>
+          </div>
+          {liveLtv > 0.85 && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-sm text-red-300">
+              ⚠ Collateral at risk — PLEX price has dropped. Repay early or add collateral to avoid liquidation.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Action Prompts */}
       {loan.status === 'APPROVED' && (
         <div className="eve-card border border-blue-500/30 space-y-3">
@@ -136,7 +176,24 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
             <li>Price: <strong className="text-white">0 ISK</strong> (collateral, not sale)</li>
           </ul>
           <p className="text-xs text-slate-500">
-            Contracts are checked every 30 minutes. ISK will be transferred after contract acceptance.
+            Contracts are checked every 30 minutes. ISK will be sent after contract acceptance.
+          </p>
+        </div>
+      )}
+      {loan.status === 'ACTIVE' && (
+        <div className="eve-card border border-green-500/30 space-y-2">
+          <h2 className="font-semibold text-green-400">How to Repay</h2>
+          <p className="text-sm text-slate-300">
+            Send <strong className="text-white">{remaining >= 1e9 ? `${(remaining / 1e9).toFixed(2)}B` : `${(remaining / 1e6).toFixed(0)}M`} ISK</strong> via wallet transfer to <strong className="text-white">{bankCharName}</strong>. Payments are detected automatically within 15 minutes.
+          </p>
+          <p className="text-xs text-slate-500">You can make partial payments — all transfers are tracked and credited.</p>
+        </div>
+      )}
+      {loan.status === 'OVERDUE' && (
+        <div className="eve-card border border-orange-500/30 space-y-2">
+          <h2 className="font-semibold text-orange-400">Payment Overdue — Act Now</h2>
+          <p className="text-sm text-slate-300">
+            Send <strong className="text-white">{remaining >= 1e9 ? `${(remaining / 1e9).toFixed(2)}B` : `${(remaining / 1e6).toFixed(0)}M`} ISK</strong> to <strong className="text-white">{bankCharName}</strong> immediately to avoid default and collateral liquidation.
           </p>
         </div>
       )}
