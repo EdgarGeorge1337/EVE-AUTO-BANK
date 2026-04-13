@@ -4,13 +4,17 @@ import { useState } from 'react';
 import type { AdminAction, ActionType } from '@/app/api/admin/action-queue/route';
 
 function formatISK(n: number) {
-  if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T ISK`;
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B ISK`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M ISK`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(0)}M ISK`;
   return `${n.toLocaleString()} ISK`;
 }
 
 const ACTION_CONFIG: Record<ActionType, { label: string; color: string; step: string }> = {
+  LIQUIDATE_COLLATERAL: {
+    label: 'Liquidate Collateral',
+    color: 'text-red-400 border-red-500/30 bg-red-500/5',
+    step: 'Grace period has expired. Sell the PLEX collateral in-game (Jita market), then click Mark as Done to record the default.',
+  },
   ACCEPT_COLLATERAL_CONTRACT: {
     label: 'Accept PLEX Contract',
     color: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
@@ -33,7 +37,7 @@ function ActionCard({ action, onDone }: { action: AdminAction; onDone: () => voi
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const cfg = ACTION_CONFIG[action.type];
-  const needsContractId = action.type !== 'SEND_ISK';
+  const needsContractId = action.type === 'ACCEPT_COLLATERAL_CONTRACT' || action.type === 'RETURN_COLLATERAL';
 
   async function handleDone() {
     if (needsContractId && !contractId.trim()) {
@@ -48,6 +52,8 @@ function ActionCard({ action, onDone }: { action: AdminAction; onDone: () => voi
         ? `/api/admin/loans/${action.loanId}/mark-collateral-received`
         : action.type === 'SEND_ISK'
         ? `/api/admin/loans/${action.loanId}/mark-isk-sent`
+        : action.type === 'LIQUIDATE_COLLATERAL'
+        ? `/api/admin/loans/${action.loanId}/liquidate`
         : `/api/admin/loans/${action.loanId}/mark-collateral-returned`;
 
     const body = needsContractId ? { contractId: contractId.trim() } : {};

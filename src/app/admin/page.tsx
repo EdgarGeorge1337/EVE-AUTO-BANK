@@ -29,8 +29,11 @@ export default async function AdminPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.isAdmin) redirect('/dashboard');
 
+  const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
+  const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
+
   const [stats, bankTokenStatus, pendingLoans, overdueLoans, recentLogs,
-    approvedNoCollateral, activeNoIsk, completedNoReturn] = await Promise.all([
+    approvedNoCollateral, activeNoIsk, completedNoReturn, liquidationEligible] = await Promise.all([
     getBankStats(),
     getBankTokenStatus(),
     db.loan.findMany({
@@ -53,9 +56,20 @@ export default async function AdminPage() {
     db.loan.findMany({ where: { status: 'APPROVED', collateralContractId: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'ACTIVE', iskSentAt: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true }, orderBy: { completedAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } }, include: { character: true }, orderBy: { overdueAt: 'asc' } }),
   ]);
 
   const queueActions = [
+    ...liquidationEligible.map((loan) => ({
+      type: 'LIQUIDATE_COLLATERAL' as const,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.collateralPlexQty,
+      description: `Liquidate ${loan.collateralPlexQty} PLEX from ${loan.character.characterName} — grace period expired`,
+      createdAt: loan.overdueAt?.toISOString() ?? loan.updatedAt.toISOString(),
+      urgent: true,
+    })),
     ...approvedNoCollateral.map((loan) => ({
       type: 'ACCEPT_COLLATERAL_CONTRACT' as const,
       loanId: loan.id,

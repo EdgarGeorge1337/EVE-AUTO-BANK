@@ -221,13 +221,42 @@ export async function checkOverdueLoans(): Promise<{ marked: number }> {
   return { marked: result.count };
 }
 
+// ── Grace Period + Liquidation Eligibility ───────────────────
+// Flags overdue loans that have passed the grace period as eligible
+// for admin liquidation. Does NOT auto-liquidate — admin must confirm.
+
+export async function checkLiquidationEligible(): Promise<{ eligible: number }> {
+  const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
+  const cutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
+
+  const eligible = await db.loan.count({
+    where: {
+      status: 'OVERDUE',
+      overdueAt: { lt: cutoff },
+    },
+  });
+
+  if (eligible > 0) {
+    await db.auditLog.create({
+      data: {
+        action: 'LIQUIDATION_ELIGIBLE',
+        description: `${eligible} overdue loan(s) past grace period — admin action required to liquidate`,
+        metadata: JSON.stringify({ eligible, gracePeriodDays, checkedAt: new Date() }),
+      },
+    });
+  }
+
+  return { eligible };
+}
+
 // ── Full Monitoring Cycle ─────────────────────────────────────
 
 export async function runMonitoringCycle() {
-  const [payments, contracts, overdue, plexPrice, vault] = await Promise.allSettled([
+  const [payments, contracts, overdue, liquidation, plexPrice, vault] = await Promise.allSettled([
     detectPayments(),
     detectContracts(),
     checkOverdueLoans(),
+    checkLiquidationEligible(),
     updatePlexPrice(),
     auditVault(),
   ]);
@@ -236,6 +265,7 @@ export async function runMonitoringCycle() {
     payments: payments.status === 'fulfilled' ? payments.value : { detected: 0, errors: [String(payments.reason)] },
     contracts: contracts.status === 'fulfilled' ? contracts.value : { matched: 0, errors: [String(contracts.reason)] },
     overdue: overdue.status === 'fulfilled' ? overdue.value : { marked: 0 },
+    liquidation: liquidation.status === 'fulfilled' ? liquidation.value : { eligible: 0 },
     plexPrice: plexPrice.status === 'fulfilled' ? plexPrice.value : { error: String(plexPrice.reason) },
     vault: vault.status === 'fulfilled' ? vault.value : { held: 0, expected: 0, discrepancy: 0, error: String(vault.reason) },
     runAt: new Date().toISOString(),

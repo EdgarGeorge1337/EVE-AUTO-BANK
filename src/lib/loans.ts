@@ -2,6 +2,7 @@
 
 import { db } from '@/lib/db';
 import { appraisePlexValue } from '@/lib/esi';
+import { appraiseItems } from '@/lib/janice';
 import { recalculateAndSave } from '@/lib/credit-score';
 
 const DEFAULT_INTEREST_RATE = parseFloat(process.env.BASE_INTEREST_RATE ?? '0.08');
@@ -269,6 +270,58 @@ export async function processPayment(
   return { success: true, completed: isComplete };
 }
 
+
+export async function liquidateCollateral(
+  loanId: string
+): Promise<{ success: boolean; liquidatedValue?: number; error?: string }> {
+  const loan = await db.loan.findUnique({ where: { id: loanId } });
+  if (!loan) return { success: false, error: 'Loan not found' };
+  if (loan.status !== 'OVERDUE') return { success: false, error: `Loan must be OVERDUE to liquidate (status: ${loan.status})` };
+
+  // Get current PLEX value via Janice
+  let liquidatedValue: number;
+  try {
+    const appraisal = await appraiseItems([{ typeName: 'PLEX', qty: loan.collateralPlexQty }]);
+    liquidatedValue = appraisal.totalValue;
+  } catch {
+    // Fall back to cached price
+    const cached = await db.plexPriceCache.findFirst({ orderBy: { fetchedAt: 'desc' } });
+    if (!cached) return { success: false, error: 'Cannot determine PLEX value — no price data available' };
+    liquidatedValue = cached.price * loan.collateralPlexQty;
+  }
+
+  const now = new Date();
+
+  await db.$transaction([
+    db.loan.update({
+      where: { id: loanId },
+      data: {
+        status: 'DEFAULTED',
+        defaultedAt: now,
+        collateralLiquidatedAt: now,
+        collateralLiquidatedValue: liquidatedValue,
+      },
+    }),
+    db.character.update({
+      where: { id: loan.characterId },
+      data: { totalDefaulted: { increment: 1 } },
+    }),
+    db.auditLog.create({
+      data: {
+        loanId,
+        characterId: loan.characterId,
+        action: 'COLLATERAL_LIQUIDATED',
+        description: `Collateral liquidated: ${loan.collateralPlexQty} PLEX at ${liquidatedValue.toLocaleString()} ISK. Loan marked DEFAULTED.`,
+        metadata: JSON.stringify({ plexQty: loan.collateralPlexQty, liquidatedValue, principalAmount: loan.principalAmount }),
+      },
+    }),
+  ]);
+
+  // Recalculate credit score — default will hit -150
+  await recalculateAndSave(loan.characterId);
+
+  return { success: true, liquidatedValue };
+}
 
 export async function getBankStats() {
   const [totalLoans, activeLoans, totalVolume, defaulted] = await Promise.all([

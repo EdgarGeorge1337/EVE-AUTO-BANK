@@ -6,7 +6,8 @@ import { db } from '@/lib/db';
 export type ActionType =
   | 'ACCEPT_COLLATERAL_CONTRACT'
   | 'SEND_ISK'
-  | 'RETURN_COLLATERAL';
+  | 'RETURN_COLLATERAL'
+  | 'LIQUIDATE_COLLATERAL';
 
 export interface AdminAction {
   type: ActionType;
@@ -16,6 +17,7 @@ export interface AdminAction {
   amount: number;       // ISK for SEND_ISK, PLEX qty for collateral actions
   description: string;
   createdAt: string;
+  urgent?: boolean;
 }
 
 export async function GET() {
@@ -24,28 +26,44 @@ export async function GET() {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const [approvedLoans, activeNoIsk, completedNoReturn] = await Promise.all([
-    // APPROVED + no collateralContractId → admin needs to accept PLEX contract in-game
+  const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
+  const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
+
+  const [approvedLoans, activeNoIsk, completedNoReturn, liquidationEligible] = await Promise.all([
     db.loan.findMany({
       where: { status: 'APPROVED', collateralContractId: null },
       include: { character: true },
       orderBy: { updatedAt: 'asc' },
     }),
-    // ACTIVE + no iskSentAt → admin needs to send ISK to borrower
     db.loan.findMany({
       where: { status: 'ACTIVE', iskSentAt: null },
       include: { character: true },
       orderBy: { updatedAt: 'asc' },
     }),
-    // COMPLETED + no returnContractId → admin needs to return PLEX collateral
     db.loan.findMany({
       where: { status: 'COMPLETED', returnContractId: null },
       include: { character: true },
       orderBy: { completedAt: 'asc' },
     }),
+    db.loan.findMany({
+      where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } },
+      include: { character: true },
+      orderBy: { overdueAt: 'asc' },
+    }),
   ]);
 
   const actions: AdminAction[] = [
+    // Urgent: liquidations first
+    ...liquidationEligible.map((loan) => ({
+      type: 'LIQUIDATE_COLLATERAL' as ActionType,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.collateralPlexQty,
+      description: `Liquidate ${loan.collateralPlexQty} PLEX from ${loan.character.characterName} — grace period expired`,
+      createdAt: loan.overdueAt?.toISOString() ?? loan.updatedAt.toISOString(),
+      urgent: true,
+    })),
     ...approvedLoans.map((loan) => ({
       type: 'ACCEPT_COLLATERAL_CONTRACT' as ActionType,
       loanId: loan.id,
