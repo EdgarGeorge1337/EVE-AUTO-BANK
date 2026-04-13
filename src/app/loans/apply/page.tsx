@@ -14,6 +14,22 @@ interface BankDefaults {
   insuranceCoverage: number;
 }
 
+type CoverageTier = 'BASIC' | 'STANDARD' | 'PREMIUM';
+
+const TIER_CONFIG: Record<CoverageTier, { coverage: number; basePremiumRate: number; label: string; description: string }> = {
+  BASIC:    { coverage: 0.50, basePremiumRate: 0.010, label: 'Basic',    description: '50% of principal covered' },
+  STANDARD: { coverage: 0.80, basePremiumRate: 0.020, label: 'Standard', description: '80% of principal covered' },
+  PREMIUM:  { coverage: 1.00, basePremiumRate: 0.035, label: 'Premium',  description: '100% of principal covered' },
+};
+
+function calcPremium(principal: number, ltv: number, termDays: number, tier: CoverageTier): number {
+  if (principal <= 0 || ltv <= 0) return 0;
+  const config = TIER_CONFIG[tier];
+  const ltvMultiplier  = Math.max(0.60, 1 + (ltv - 0.60) * 2.0);
+  const termMultiplier = 0.75 + (termDays / 90) * 0.50;
+  return Math.round(principal * config.basePremiumRate * ltvMultiplier * termMultiplier);
+}
+
 interface AppraisalItem {
   name: string;
   typeId: number;
@@ -55,7 +71,7 @@ export default function LoanApplyPage() {
   const [appraisalError, setAppraisalError] = useState('');
 
   const [termDays, setTermDays] = useState(30);
-  const [wantsInsurance, setWantsInsurance] = useState(false);
+  const [coverageTier, setCoverageTier] = useState<CoverageTier | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -82,7 +98,8 @@ export default function LoanApplyPage() {
 
   const ltv = collateralValue > 0 ? principal / collateralValue : 0;
   const totalRepayment = principal * (1 + interestRate);
-  const insurancePremium = wantsInsurance ? principal * (defaults?.insuranceRate ?? 0.02) : 0;
+  const wantsInsurance = coverageTier !== null;
+  const insurancePremium = wantsInsurance ? calcPremium(principal, ltv, termDays, coverageTier!) : 0;
   const ltvOk = ltv > 0 && ltv <= maxLtv;
 
   const handleAppraise = useCallback(async () => {
@@ -121,7 +138,7 @@ export default function LoanApplyPage() {
       let body: Record<string, unknown>;
 
       if (collateralMode === 'plex') {
-        body = { principalAmount: principal, plexQty: qty, termDays, wantsInsurance };
+        body = { principalAmount: principal, plexQty: qty, termDays, wantsInsurance, coverageTier: coverageTier ?? undefined };
       } else {
         if (!appraisal || appraisal.items.length === 0) {
           setError('Please appraise your items first.');
@@ -133,6 +150,7 @@ export default function LoanApplyPage() {
           collateralItems: appraisal.items.map((i) => ({ typeName: i.name, qty: i.qty })),
           termDays,
           wantsInsurance,
+          coverageTier: coverageTier ?? undefined,
         };
       }
 
@@ -329,23 +347,79 @@ export default function LoanApplyPage() {
         </div>
 
         {/* Insurance */}
-        <div className="eve-card space-y-3">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantsInsurance}
-              onChange={(e) => setWantsInsurance(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-amber-500"
-            />
+        <div className="eve-card space-y-4">
+          <div className="flex items-center justify-between">
             <div>
-              <div className="font-semibold text-white">Loan Insurance</div>
-              <div className="text-sm text-slate-400">
-                {defaults
-                  ? `2% premium (${formatISK(insurancePremium)}) covers ${(defaults.insuranceCoverage * 100).toFixed(0)}% of principal if you default.`
-                  : 'Loading...'}
-              </div>
+              <h2 className="font-semibold text-white">Loan Insurance</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Optional. Premium is risk-adjusted by LTV, term, and credit score.</p>
             </div>
-          </label>
+            {coverageTier && (
+              <button
+                type="button"
+                onClick={() => setCoverageTier(null)}
+                className="text-xs text-slate-400 hover:text-white transition-colors"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {(Object.keys(TIER_CONFIG) as CoverageTier[]).map((tier) => {
+              const cfg = TIER_CONFIG[tier];
+              const premium = calcPremium(principal, ltv, termDays, tier);
+              const selected = coverageTier === tier;
+              return (
+                <button
+                  key={tier}
+                  type="button"
+                  onClick={() => setCoverageTier(selected ? null : tier)}
+                  className={`rounded-lg border p-3 text-left transition-all ${
+                    selected
+                      ? tier === 'BASIC'
+                        ? 'border-slate-400 bg-slate-500/20'
+                        : tier === 'STANDARD'
+                        ? 'border-blue-400 bg-blue-500/20'
+                        : 'border-amber-400 bg-amber-500/20'
+                      : 'border-slate-700 hover:border-slate-500 bg-slate-800/30'
+                  }`}
+                >
+                  <div className={`text-xs font-bold uppercase tracking-wide mb-1 ${
+                    selected
+                      ? tier === 'BASIC' ? 'text-slate-300' : tier === 'STANDARD' ? 'text-blue-400' : 'text-amber-400'
+                      : 'text-slate-400'
+                  }`}>
+                    {cfg.label}
+                  </div>
+                  <div className="text-white font-semibold text-sm">
+                    {(cfg.coverage * 100).toFixed(0)}% covered
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    {principal > 0 && ltv > 0
+                      ? `~${formatISK(premium)} premium`
+                      : `~${(cfg.basePremiumRate * 100).toFixed(1)}% base rate`}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {!coverageTier && (
+            <p className="text-xs text-slate-500">No insurance selected — click a tier above to add coverage.</p>
+          )}
+          {coverageTier && (
+            <div className="bg-slate-800/50 rounded p-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Coverage</span>
+                <span className="text-white">{(TIER_CONFIG[coverageTier].coverage * 100).toFixed(0)}% of principal if you default</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Premium (paid upfront)</span>
+                <span className="text-amber-400 font-semibold">{formatISK(insurancePremium)}</span>
+              </div>
+              <p className="text-xs text-slate-500 pt-1">Premium is non-refundable on cancellation. Claim is reviewed by admin before payout.</p>
+            </div>
+          )}
         </div>
 
         {/* Summary */}
@@ -355,7 +429,7 @@ export default function LoanApplyPage() {
             {[
               ['Principal', formatISK(principal)],
               ['Interest (8%)', formatISK(principal * interestRate)],
-              wantsInsurance ? ['Insurance Premium (2%)', formatISK(insurancePremium)] : null,
+              wantsInsurance && coverageTier ? [`Insurance — ${TIER_CONFIG[coverageTier].label}`, formatISK(insurancePremium)] : null,
               ['Total Repayment', formatISK(totalRepayment + insurancePremium)],
               ['Term', `${termDays} days`],
               ['Due Date', new Date(Date.now() + termDays * 86400000).toLocaleDateString()],

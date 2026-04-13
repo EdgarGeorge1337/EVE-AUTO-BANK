@@ -4,6 +4,12 @@ import { db } from '@/lib/db';
 import { appraisePlexValue } from '@/lib/esi';
 import { appraiseItems } from '@/lib/janice';
 import { recalculateAndSave } from '@/lib/credit-score';
+import {
+  calculateInsurancePremium,
+  poolAddPremium,
+  poolDeductClaim,
+  type CoverageTier,
+} from '@/lib/insurance';
 
 const DEFAULT_INTEREST_RATE = parseFloat(process.env.BASE_INTEREST_RATE ?? '0.08');
 const DEFAULT_TERM_DAYS = parseInt(process.env.LOAN_TERM_DAYS ?? '30');
@@ -17,6 +23,7 @@ export interface LoanApplicationInput {
   collateralItems?: { typeName: string; qty: number }[];
   termDays?: number;
   wantsInsurance?: boolean;
+  coverageTier?: CoverageTier;
 }
 
 export interface LoanApplicationResult {
@@ -28,8 +35,9 @@ export interface LoanApplicationResult {
 }
 
 export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApplicationResult> {
-  const { characterId, principalAmount, plexQty, termDays, wantsInsurance } = input;
+  const { characterId, principalAmount, plexQty, termDays, wantsInsurance, coverageTier } = input;
   const term = termDays ?? DEFAULT_TERM_DAYS;
+  const tier: CoverageTier = coverageTier ?? 'STANDARD';
 
   // Appraise collateral
   let collateralValue: number;
@@ -66,7 +74,16 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
     character.totalDefaulted === 0 &&
     ltv <= 0.6;
 
-  const insurancePremium = wantsInsurance ? principalAmount * 0.02 : 0;
+  // Risk-adjusted insurance premium
+  let insurancePremium = 0;
+  let insuranceRate = 0;
+  let coveragePercent = 0;
+  if (wantsInsurance) {
+    const calc = calculateInsurancePremium(principalAmount, ltv, character.creditScore, term, tier);
+    insurancePremium = calc.premium;
+    insuranceRate = calc.rate;
+    coveragePercent = calc.coveragePercent;
+  }
 
   const loan = await db.loan.create({
     data: {
@@ -86,13 +103,20 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
       insurance: wantsInsurance
         ? {
             create: {
+              coverageTier: tier,
               premiumAmount: insurancePremium,
-              coveragePercent: 0.8,
+              premiumRate: insuranceRate,
+              coveragePercent,
             },
           }
         : undefined,
     },
   });
+
+  // Track premium in insurance pool
+  if (wantsInsurance && insurancePremium > 0) {
+    await poolAddPremium(insurancePremium);
+  }
 
   await db.auditLog.create({
     data: {
@@ -271,6 +295,43 @@ export async function processPayment(
 }
 
 
+/** Borrower requests an insurance claim — moves to PENDING_REVIEW for admin. */
+export async function requestInsuranceClaim(
+  loanId: string,
+  characterId: string
+): Promise<{ success: boolean; error?: string }> {
+  const loan = await db.loan.findUnique({
+    where: { id: loanId },
+    include: { insurance: true },
+  });
+  if (!loan) return { success: false, error: 'Loan not found' };
+  if (loan.characterId !== characterId) return { success: false, error: 'Unauthorized' };
+  if (loan.status !== 'DEFAULTED') return { success: false, error: 'Claims can only be filed on defaulted loans' };
+  if (!loan.insurance) return { success: false, error: 'This loan has no insurance' };
+  if (loan.insurance.claimStatus !== 'NONE') return { success: false, error: 'A claim has already been filed' };
+
+  await db.$transaction([
+    db.loanInsurance.update({
+      where: { loanId },
+      data: {
+        claimStatus: 'PENDING_REVIEW',
+        claimRequestedAt: new Date(),
+      },
+    }),
+    db.auditLog.create({
+      data: {
+        loanId,
+        characterId,
+        action: 'INSURANCE_CLAIM_REQUESTED',
+        description: `Borrower filed insurance claim (${(loan.insurance.coveragePercent * 100).toFixed(0)}% coverage, ${loan.insurance.coverageTier} tier)`,
+      },
+    }),
+  ]);
+
+  return { success: true };
+}
+
+/** Admin approves an insurance claim — records payout and deducts from pool. */
 export async function processInsuranceClaim(
   loanId: string
 ): Promise<{ success: boolean; claimAmount?: number; error?: string }> {
@@ -279,18 +340,21 @@ export async function processInsuranceClaim(
     include: { insurance: true },
   });
   if (!loan) return { success: false, error: 'Loan not found' };
-  if (loan.status !== 'DEFAULTED') return { success: false, error: 'Insurance claims can only be filed on defaulted loans' };
+  if (loan.status !== 'DEFAULTED') return { success: false, error: 'Insurance claims can only be approved on defaulted loans' };
   if (!loan.insurance) return { success: false, error: 'This loan has no insurance' };
-  if (!loan.insurance.claimable) return { success: false, error: 'Insurance claim already processed' };
+  if (loan.insurance.claimStatus === 'APPROVED') return { success: false, error: 'Insurance claim already approved' };
+  if (loan.insurance.claimStatus === 'DENIED') return { success: false, error: 'Cannot approve a denied claim' };
 
-  const claimAmount = loan.principalAmount * loan.insurance.coveragePercent;
+  const claimAmount = Math.round(loan.principalAmount * loan.insurance.coveragePercent);
+  const now = new Date();
 
   await db.$transaction([
     db.loanInsurance.update({
       where: { loanId },
       data: {
+        claimStatus: 'APPROVED',
         claimable: false,
-        claimedAt: new Date(),
+        claimedAt: now,
         claimAmount,
       },
     }),
@@ -298,14 +362,53 @@ export async function processInsuranceClaim(
       data: {
         loanId,
         characterId: loan.characterId,
-        action: 'INSURANCE_CLAIM_PROCESSED',
-        description: `Insurance claim processed: ${claimAmount.toLocaleString()} ISK (${(loan.insurance.coveragePercent * 100).toFixed(0)}% of ${loan.principalAmount.toLocaleString()} ISK principal)`,
+        action: 'INSURANCE_CLAIM_APPROVED',
+        description: `Insurance claim approved: ${claimAmount.toLocaleString()} ISK (${(loan.insurance.coveragePercent * 100).toFixed(0)}% of ${loan.principalAmount.toLocaleString()} ISK principal)`,
         metadata: JSON.stringify({ claimAmount, coveragePercent: loan.insurance.coveragePercent, principalAmount: loan.principalAmount }),
       },
     }),
   ]);
 
+  await poolDeductClaim(claimAmount);
+
   return { success: true, claimAmount };
+}
+
+/** Admin denies an insurance claim with a reason. */
+export async function denyInsuranceClaim(
+  loanId: string,
+  reason: string
+): Promise<{ success: boolean; error?: string }> {
+  const loan = await db.loan.findUnique({
+    where: { id: loanId },
+    include: { insurance: true },
+  });
+  if (!loan) return { success: false, error: 'Loan not found' };
+  if (!loan.insurance) return { success: false, error: 'This loan has no insurance' };
+  if (loan.insurance.claimStatus === 'APPROVED') return { success: false, error: 'Cannot deny an approved claim' };
+  if (loan.insurance.claimStatus === 'DENIED') return { success: false, error: 'Claim already denied' };
+
+  await db.$transaction([
+    db.loanInsurance.update({
+      where: { loanId },
+      data: {
+        claimStatus: 'DENIED',
+        claimable: false,
+        claimDenialReason: reason,
+      },
+    }),
+    db.auditLog.create({
+      data: {
+        loanId,
+        characterId: loan.characterId,
+        action: 'INSURANCE_CLAIM_DENIED',
+        description: `Insurance claim denied: ${reason}`,
+        metadata: JSON.stringify({ reason }),
+      },
+    }),
+  ]);
+
+  return { success: true };
 }
 
 export async function liquidateCollateral(

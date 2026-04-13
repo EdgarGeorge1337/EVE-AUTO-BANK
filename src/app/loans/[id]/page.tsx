@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { appraiseItems } from '@/lib/janice';
 import { calculateCancellationFee } from '@/lib/loans';
 import { CancelLoanButton } from '@/components/cancel-loan-button';
+import { FileClaimButton } from '@/components/file-claim-button';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -137,25 +138,57 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
             <span className="text-white font-mono">{loan.collateralContractId}</span>
           </div>
         )}
-        {loan.insurance && (
-          <div className={`rounded p-3 text-sm space-y-1 ${loan.insurance.claimedAt ? 'bg-slate-800/50 border border-slate-700' : 'bg-amber-500/10 border border-amber-500/30 text-amber-300'}`}>
-            <div className="flex items-center justify-between">
-              <span className="font-semibold">
-                {loan.insurance.claimedAt ? '✓ Insurance Claimed' : 'Insured'}
-              </span>
-              <span>{(loan.insurance.coveragePercent * 100).toFixed(0)}% coverage</span>
+        {loan.insurance && (() => {
+          const ins = loan.insurance;
+          const claimStatus = ins.claimStatus ?? 'NONE';
+          const claimBadge: Record<string, string> = {
+            NONE:           'text-slate-400 bg-slate-400/10 border-slate-400/30',
+            PENDING_REVIEW: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30',
+            APPROVED:       'text-green-400 bg-green-400/10 border-green-400/30',
+            DENIED:         'text-red-400 bg-red-400/10 border-red-400/30',
+          };
+          const claimLabel: Record<string, string> = {
+            NONE: 'Insured',
+            PENDING_REVIEW: 'Claim Under Review',
+            APPROVED: 'Claim Approved',
+            DENIED: 'Claim Denied',
+          };
+          return (
+            <div className={`rounded p-3 text-sm space-y-2 border ${claimBadge[claimStatus] ?? 'border-slate-700 bg-slate-800/50'}`}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">{claimLabel[claimStatus]}</span>
+                  <span className="text-xs opacity-70">{ins.coverageTier ?? 'STANDARD'} · {(ins.coveragePercent * 100).toFixed(0)}% coverage</span>
+                </div>
+                {loan.status === 'DEFAULTED' && claimStatus === 'NONE' && !character.isAdmin && (
+                  <FileClaimButton
+                    loanId={loan.id}
+                    coverageTier={ins.coverageTier ?? 'STANDARD'}
+                    coveragePercent={ins.coveragePercent}
+                    principalAmount={loan.principalAmount}
+                  />
+                )}
+              </div>
+              <div className="text-xs text-slate-400 space-y-0.5">
+                <div>Premium paid: {formatISK(ins.premiumAmount)}</div>
+                {ins.claimRequestedAt && (
+                  <div>Claim filed: {new Date(ins.claimRequestedAt).toLocaleDateString()}</div>
+                )}
+                {claimStatus === 'APPROVED' && ins.claimAmount && ins.claimedAt && (
+                  <div className="text-green-400">
+                    Payout: {formatISK(ins.claimAmount)} on {new Date(ins.claimedAt).toLocaleDateString()}
+                  </div>
+                )}
+                {claimStatus === 'DENIED' && ins.claimDenialReason && (
+                  <div className="text-red-400">Denial reason: {ins.claimDenialReason}</div>
+                )}
+                {claimStatus === 'PENDING_REVIEW' && (
+                  <div className="text-yellow-400">Your claim is pending admin review.</div>
+                )}
+              </div>
             </div>
-            <div className="text-slate-400 text-xs">
-              Premium paid: {formatISK(loan.insurance.premiumAmount)}
-              {loan.insurance.claimedAt && (
-                <span className="ml-2">· Claim paid: {formatISK(loan.insurance.claimAmount ?? 0)} on {new Date(loan.insurance.claimedAt).toLocaleDateString()}</span>
-              )}
-              {!loan.insurance.claimedAt && loan.status === 'DEFAULTED' && (
-                <span className="ml-2 text-purple-400">· Claim pending admin processing</span>
-              )}
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Live collateral health */}

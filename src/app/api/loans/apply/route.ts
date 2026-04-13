@@ -10,6 +10,8 @@ const collateralItemSchema = z.object({
   qty: z.number().int().positive().max(100_000_000),
 });
 
+const coverageTierSchema = z.enum(['BASIC', 'STANDARD', 'PREMIUM']).optional();
+
 const applySchema = z.union([
   // PLEX-only path
   z.object({
@@ -18,6 +20,7 @@ const applySchema = z.union([
     collateralItems: z.undefined().optional(),
     termDays: z.number().int().min(7).max(90).optional(),
     wantsInsurance: z.boolean().optional(),
+    coverageTier: coverageTierSchema,
   }),
   // Multi-item path
   z.object({
@@ -26,6 +29,7 @@ const applySchema = z.union([
     collateralItems: z.array(collateralItemSchema).min(1).max(50),
     termDays: z.number().int().min(7).max(90).optional(),
     wantsInsurance: z.boolean().optional(),
+    coverageTier: coverageTierSchema,
   }),
 ]);
 

@@ -4,8 +4,10 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { getBankStats } from '@/lib/loans';
 import { getBankTokenStatus } from '@/lib/auth-admin';
+import { getPoolStats } from '@/lib/insurance';
 import { AppraisalTool } from '@/components/appraisal-tool';
 import { ActionQueue } from '@/components/action-queue';
+import { InsuranceClaimQueue } from '@/components/insurance-claim-queue';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -32,10 +34,11 @@ export default async function AdminPage() {
   const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
   const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
 
-  const [stats, bankTokenStatus, pendingLoans, overdueLoans, recentLogs,
-    approvedNoCollateral, activeNoIsk, completedNoReturn, liquidationEligible, insuranceClaims] = await Promise.all([
+  const [stats, bankTokenStatus, poolStats, pendingLoans, overdueLoans, recentLogs,
+    approvedNoCollateral, activeNoIsk, completedNoReturn, liquidationEligible, insuranceClaims, pendingClaims] = await Promise.all([
     getBankStats(),
     getBankTokenStatus(),
+    getPoolStats(),
     db.loan.findMany({
       where: { status: 'PENDING' },
       include: { character: true, insurance: true },
@@ -58,6 +61,12 @@ export default async function AdminPage() {
     db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true }, orderBy: { completedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } }, include: { character: true }, orderBy: { overdueAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimable: true } }, include: { character: true, insurance: true }, orderBy: { defaultedAt: 'asc' } }),
+    // Claims explicitly filed by borrowers awaiting review
+    db.loan.findMany({
+      where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimStatus: 'PENDING_REVIEW' } },
+      include: { character: true, insurance: true },
+      orderBy: { updatedAt: 'asc' },
+    }),
   ]);
 
   const queueActions = [
@@ -151,6 +160,65 @@ export default async function AdminPage() {
           </div>
         ))}
       </div>
+
+      {/* Insurance Pool */}
+      <div className="eve-card space-y-4">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          Insurance Pool
+          <span className={`text-xs px-2 py-0.5 rounded font-normal ${
+            poolStats.reserveRatio >= 0.5 ? 'bg-green-500/20 text-green-400' :
+            poolStats.reserveRatio >= 0.2 ? 'bg-orange-500/20 text-orange-400' :
+            'bg-red-500/20 text-red-400'
+          }`}>
+            {(poolStats.reserveRatio * 100).toFixed(0)}% reserve ratio
+          </span>
+        </h2>
+        <div className="grid grid-cols-3 gap-4 text-sm">
+          <div>
+            <div className="text-slate-400">Premiums Collected</div>
+            <div className="text-green-400 font-semibold mt-0.5">{formatISK(poolStats.premiumsCollected)}</div>
+          </div>
+          <div>
+            <div className="text-slate-400">Claims Paid</div>
+            <div className="text-red-400 font-semibold mt-0.5">{formatISK(poolStats.claimsPaid)}</div>
+          </div>
+          <div>
+            <div className="text-slate-400">Net Reserve</div>
+            <div className={`font-semibold mt-0.5 ${poolStats.netReserve >= 0 ? 'text-white' : 'text-red-400'}`}>
+              {formatISK(poolStats.netReserve)}
+            </div>
+          </div>
+        </div>
+        {poolStats.reserveRatio < 0.2 && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-sm text-red-300">
+            ⚠ Insurance pool reserve is critically low. Consider suspending new insurance sales or increasing premium rates.
+          </div>
+        )}
+      </div>
+
+      {/* Insurance Claims Queue */}
+      {pendingClaims.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+            Insurance Claims
+            <span className="text-sm bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">
+              {pendingClaims.length} pending review
+            </span>
+          </h2>
+          <InsuranceClaimQueue
+            claims={pendingClaims.map((loan) => ({
+              loanId: loan.id,
+              characterName: loan.character.characterName,
+              characterId: loan.character.characterId,
+              principalAmount: loan.principalAmount,
+              coverageTier: loan.insurance?.coverageTier ?? 'STANDARD',
+              coveragePercent: loan.insurance?.coveragePercent ?? 0.8,
+              claimAmount: Math.round(loan.principalAmount * (loan.insurance?.coveragePercent ?? 0.8)),
+              requestedAt: loan.insurance?.claimRequestedAt?.toISOString() ?? loan.updatedAt.toISOString(),
+            }))}
+          />
+        </div>
+      )}
 
       {/* Bank Character API Status */}
       <div className={`eve-card border ${bankTokenStatus.connected && !bankTokenStatus.needsReconnect ? 'border-green-500/30' : 'border-red-500/30'}`}>

@@ -191,15 +191,29 @@ model LoanInsurance {
   id     String @id @default(cuid())
   loanId String @unique
 
+  coverageTier     String   @default("STANDARD") // BASIC | STANDARD | PREMIUM
   premiumAmount    Float
-  coveragePercent  Float  // e.g. 0.80 = 80%
-  claimable        Boolean @default(true)
-  claimedAt        DateTime?
-  claimAmount      Float?
+  premiumRate      Float    @default(0.02)
+  coveragePercent  Float    // e.g. 0.80 = 80%
+
+  // Claim lifecycle
+  claimStatus       String    @default("NONE") // NONE | PENDING_REVIEW | APPROVED | DENIED
+  claimRequestedAt  DateTime?
+  claimedAt         DateTime?
+  claimAmount       Float?
+  claimDenialReason String?
+  claimable         Boolean   @default(true) // legacy compat
 
   createdAt DateTime @default(now())
 
   loan Loan @relation(fields: [loanId], references: [id])
+}
+
+model InsurancePool {
+  id                String   @id @default(cuid())
+  premiumsCollected Float    @default(0)
+  claimsPaid        Float    @default(0)
+  updatedAt         DateTime @updatedAt
 }
 
 // ============================================================
