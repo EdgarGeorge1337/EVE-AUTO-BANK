@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { appraiseItems } from '@/lib/janice';
 
+export const revalidate = 21600; // 6 hours
+
 async function getPublicStats() {
   const [totalLoans, activeLoans, totalVolume, janiceResult] = await Promise.all([
     db.loan.count({ where: { status: { in: ['COMPLETED', 'ACTIVE'] } } }),
