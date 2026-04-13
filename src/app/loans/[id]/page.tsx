@@ -3,6 +3,8 @@ import { authOptions } from '@/lib/auth-customer';
 import { redirect, notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { appraiseItems } from '@/lib/janice';
+import { calculateCancellationFee } from '@/lib/loans';
+import { CancelLoanButton } from '@/components/cancel-loan-button';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -55,14 +57,28 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
   const liveLtv = liveCollateralValue ? loan.principalAmount / liveCollateralValue : null;
   const daysLeft = Math.ceil((new Date(loan.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
+  const canCancel = ['PENDING', 'APPROVED', 'ACTIVE'].includes(loan.status);
+  const cancellationFee = loan.status === 'PENDING' ? 0 : calculateCancellationFee(loan);
+  const insurancePremium = loan.insurance?.premiumAmount ?? 0;
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <Link href="/dashboard" className="text-slate-400 hover:text-white text-sm">← Dashboard</Link>
         <h1 className="text-2xl font-bold text-white">Loan Details</h1>
         <span className={`text-sm font-semibold px-2 py-1 rounded border ${STATUS_COLORS[loan.status]}`}>
           {loan.status}
         </span>
+        {canCancel && (
+          <div className="ml-auto">
+            <CancelLoanButton
+              loanId={loan.id}
+              status={loan.status}
+              cancellationFee={cancellationFee}
+              insurancePremium={insurancePremium}
+            />
+          </div>
+        )}
       </div>
 
       {/* Key Figures */}
