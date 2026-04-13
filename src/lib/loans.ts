@@ -11,7 +11,8 @@ const GRACE_PERIOD_DAYS = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
 export interface LoanApplicationInput {
   characterId: string; // db Character.id
   principalAmount: number;
-  plexQty: number;
+  plexQty?: number;
+  collateralItems?: { typeName: string; qty: number }[];
   termDays?: number;
   wantsInsurance?: boolean;
 }
@@ -30,6 +31,9 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
 
   // Appraise collateral
   let collateralValue: number;
+  if (!plexQty) {
+    return { success: false, error: 'PLEX collateral required (multi-asset collateral not yet supported)' };
+  }
   try {
     collateralValue = await appraisePlexValue(plexQty);
   } catch {

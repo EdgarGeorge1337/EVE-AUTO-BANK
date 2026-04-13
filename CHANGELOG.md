@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-04-13
+
+### Added
+- Cloudflare tunnel — app live at https://evebank.gamehostingnode.com
+- Systemd services for both `evebank` (Next.js) and `cloudflared` (tunnel), auto-start on reboot
+- Two separate EVE SSO applications documented:
+  - App 1 (borrowers): wallet, assets, contracts, standings scopes
+  - App 2 (admin): wallet, contracts, assets scopes
+- Clarified automation limits: ESI has no write access for wallets/contracts — admin action queue pattern adopted for in-game steps
+
+### Changed
+- `NEXTAUTH_URL` updated to `https://evebank.gamehostingnode.com`
+- `LoanApplicationInput` updated to support optional `collateralItems` alongside `plexQty`
+- README rewritten to accurately reflect project scope and manual steps
+
+### Fixed
+- TypeScript build error in `/api/loans/apply` caused by union schema vs interface mismatch
+
 ## [1.8.7] - 2026-02-16
 
 ### 🎉 PRODUCTION DEPLOYMENT READY - ALL CRITICAL SYSTEMS COMPLETE

@@ -1,18 +1,19 @@
-# EVE Auto Bank - Production-Ready PLEX-Secured Lending System
+# EVE Auto Bank - PLEX-Secured ISK Lending System
 
-[![Version](https://img.shields.io/badge/version-1.8.7-green.svg)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org/)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](package.json)
 
-A production-ready, secure, and automated PLEX-secured lending system for EVE Online, built with modern web technologies and comprehensive ESI API integration.
+A PLEX-secured ISK lending platform for EVE Online. Borrowers apply for loans, submit PLEX as collateral, and track repayments. The admin gets a daily action queue telling them exactly what to do in-game — accept contracts, send ISK, return collateral.
 
-## Production Status: READY FOR DEPLOYMENT
+> **Note on automation:** ESI does not provide write access for wallets or contracts. All in-game actions (accepting contracts, sending ISK, returning collateral) are performed manually by the admin character. The app automates everything else — appraisal, credit scoring, payment detection, overdue tracking, and action queuing.
 
-✅ **All Critical Systems Operational**  
-✅ **Zero Security Vulnerabilities**  
-✅ **Clean Build Pipeline**  
-✅ **Complete Loan Lifecycle Automation**
+## Status
+
+✅ **Live at https://evebank.gamehostingnode.com**  
+✅ **Cloudflare tunnel active**  
+✅ **Clean build — 16 routes**  
+⏳ **Awaiting ESI API keys (applications submitted)**
 
 ---
 
@@ -62,13 +63,25 @@ npm start
 
 ### Core Banking Features
 
-- **Automated Loan Applications**: Complete ESI integration
-- **Real-time Asset Appraisal**: Enhanced ESI market data pricing
-- **Payment Detection**: Automated wallet journal monitoring
-- **Contract Management**: Automated PLEX contract detection and linking
-- **Risk Management**: LTV ratios, collateral tracking, insurance integration
-- **Monitoring System**: Optimized intervals (15/30 minutes)
-- **Security**: Zero vulnerabilities, secure architecture
+- **Loan Applications**: Borrowers apply via web UI, collateral appraised via Janice API
+- **Credit Scoring**: Built from wallet balance, standings, repayment history, corp history
+- **Payment Detection**: Automated wallet journal monitoring for incoming repayments
+- **Contract Detection**: Detects incoming PLEX collateral contracts from borrowers
+- **Admin Action Queue**: Daily checklist of in-game actions the admin needs to execute
+- **Risk Management**: LTV ratios, collateral tracking, overdue detection
+- **Transparency**: Public loan book and bank stats
+
+### ESI Applications
+
+Two separate EVE SSO applications are required:
+
+**App 1 — Player Login** (borrowers)
+- Callback: `https://evebank.gamehostingnode.com/api/auth/callback/eveonline`
+- Scopes: `esi-wallet.read_character_wallet.v1`, `esi-assets.read_assets.v1`, `esi-contracts.read_character_contracts.v1`, `esi-characters.read_standings.v1`
+
+**App 2 — Admin API** (bank character only)
+- Callback: `https://evebank.gamehostingnode.com/api/admin/auth/callback`
+- Scopes: `esi-wallet.read_character_wallet.v1`, `esi-contracts.read_character_contracts.v1`, `esi-assets.read_assets.v1`
 
 ### Technology Stack
 
@@ -118,21 +131,28 @@ GET  /api/admin/monitoring/plex-price # PLEX price monitoring
 ### Environment Variables
 
 ```env
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/evebank"
+# Database (SQLite for dev, swap for PostgreSQL in prod)
+DATABASE_URL="file:./dev.db"
 
-# ESI API
-ESI_CLIENT_ID="your_esi_client_id"
-ESI_CLIENT_SECRET="your_esi_client_secret"
-ESI_CALLBACK_URL="http://localhost:3000/api/auth/callback"
-
-# Bank Configuration
-BANK_CHARACTER_ID="your_bank_character_id"
-DEFAULT_MARKET_REGION_ID="10000002" # The Forge (Jita)
-
-# Security
+# NextAuth
 NEXTAUTH_SECRET="your_nextauth_secret"
-NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_URL="https://evebank.gamehostingnode.com"
+
+# App 1 — Player Login (borrowers)
+ESI_CLIENT_ID="your-customer-sso-client-id"
+ESI_CLIENT_SECRET="your-customer-sso-client-secret"
+ESI_CALLBACK_URL="https://evebank.gamehostingnode.com/api/auth/callback/eveonline"
+
+# App 2 — Admin API (bank character)
+ESI_ADMIN_CLIENT_ID="your-admin-api-client-id"
+ESI_ADMIN_CLIENT_SECRET="your-admin-api-client-secret"
+ESI_ADMIN_CALLBACK_URL="https://evebank.gamehostingnode.com/api/admin/auth/callback"
+
+# Bank Admin Character
+ADMIN_CHARACTER_ID="your_character_id"
+
+# Janice Asset Appraisal
+JANICE_API_KEY="your_janice_api_key"
 ```
 
 ### Security Features
@@ -324,40 +344,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**EVE Auto Bank is production-ready for immediate deployment with real EVE customers!**
-
-Built with ❤️ for the EVE Online community, pagination (TanStack Table)
-
-- **Charts**: Beautiful visualizations with Recharts
-- **Forms**: Type-safe forms with React Hook Form + Zod validation
-
-### Interactive Features
-
-- **Animations**: Smooth micro-interactions with Framer Motion
-- **Drag & Drop**: Modern drag-and-drop functionality with DND Kit
-- **Theme Switching**: Built-in dark/light mode support
-
-### 🔐 Backend Integration
-
-- **Authentication**: Ready-to-use auth flows with NextAuth.js
-- **Database**: Type-safe database operations with Prisma
-- **API Client**: HTTP requests with Fetch + TanStack Query
-- **State Management**: Simple and scalable with Zustand
-
-### 🌍 Production Features
-
-- **Internationalization**: Multi-language support with Next Intl
-- **Image Optimization**: Automatic image processing with Sharp
-- **Type Safety**: End-to-end TypeScript with Zod validation
-- **Essential Hooks**: 100+ useful React hooks with ReactUse for common patterns
-
-## 🤝 Get Started
-
-1. **Install dependencies** - Run `npm install`
-2. **Configure EVE SSO** - Set up your EVE Online SSO application credentials
-3. **Setup database** - Run `npm run db:generate` and `npm run db:push`
-4. **Start development** - Run `npm run dev` and visit `http://localhost:3000`
-
----
-
-Built with ❤️ for the EVE Online community. Automated banking powered by ESI API 🚀
+Built for the EVE Online community.

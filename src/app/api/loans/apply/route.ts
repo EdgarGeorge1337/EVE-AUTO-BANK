@@ -5,12 +5,29 @@ import { db } from '@/lib/db';
 import { applyForLoan } from '@/lib/loans';
 import { z } from 'zod';
 
-const applySchema = z.object({
-  principalAmount: z.number().positive().max(100_000_000_000), // 100B ISK max
-  plexQty: z.number().int().positive().max(10000),
-  termDays: z.number().int().min(7).max(90).optional(),
-  wantsInsurance: z.boolean().optional(),
+const collateralItemSchema = z.object({
+  typeName: z.string().min(1).max(200),
+  qty: z.number().int().positive().max(100_000_000),
 });
+
+const applySchema = z.union([
+  // PLEX-only path
+  z.object({
+    principalAmount: z.number().positive().max(100_000_000_000),
+    plexQty: z.number().int().positive().max(10000),
+    collateralItems: z.undefined().optional(),
+    termDays: z.number().int().min(7).max(90).optional(),
+    wantsInsurance: z.boolean().optional(),
+  }),
+  // Multi-item path
+  z.object({
+    principalAmount: z.number().positive().max(100_000_000_000),
+    plexQty: z.undefined().optional(),
+    collateralItems: z.array(collateralItemSchema).min(1).max(50),
+    termDays: z.number().int().min(7).max(90).optional(),
+    wantsInsurance: z.boolean().optional(),
+  }),
+]);
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
