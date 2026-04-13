@@ -122,9 +122,22 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
           </div>
         )}
         {loan.insurance && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded p-3 text-sm text-amber-300">
-            Insured: {(loan.insurance.coveragePercent * 100).toFixed(0)}% coverage &bull; Premium: {formatISK(loan.insurance.premiumAmount)}
-            {loan.insurance.claimedAt && ` (Claimed ${new Date(loan.insurance.claimedAt).toLocaleDateString()})`}
+          <div className={`rounded p-3 text-sm space-y-1 ${loan.insurance.claimedAt ? 'bg-slate-800/50 border border-slate-700' : 'bg-amber-500/10 border border-amber-500/30 text-amber-300'}`}>
+            <div className="flex items-center justify-between">
+              <span className="font-semibold">
+                {loan.insurance.claimedAt ? '✓ Insurance Claimed' : 'Insured'}
+              </span>
+              <span>{(loan.insurance.coveragePercent * 100).toFixed(0)}% coverage</span>
+            </div>
+            <div className="text-slate-400 text-xs">
+              Premium paid: {formatISK(loan.insurance.premiumAmount)}
+              {loan.insurance.claimedAt && (
+                <span className="ml-2">· Claim paid: {formatISK(loan.insurance.claimAmount ?? 0)} on {new Date(loan.insurance.claimedAt).toLocaleDateString()}</span>
+              )}
+              {!loan.insurance.claimedAt && loan.status === 'DEFAULTED' && (
+                <span className="ml-2 text-purple-400">· Claim pending admin processing</span>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -33,7 +33,7 @@ export default async function AdminPage() {
   const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
 
   const [stats, bankTokenStatus, pendingLoans, overdueLoans, recentLogs,
-    approvedNoCollateral, activeNoIsk, completedNoReturn, liquidationEligible] = await Promise.all([
+    approvedNoCollateral, activeNoIsk, completedNoReturn, liquidationEligible, insuranceClaims] = await Promise.all([
     getBankStats(),
     getBankTokenStatus(),
     db.loan.findMany({
@@ -57,9 +57,20 @@ export default async function AdminPage() {
     db.loan.findMany({ where: { status: 'ACTIVE', iskSentAt: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true }, orderBy: { completedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } }, include: { character: true }, orderBy: { overdueAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimable: true } }, include: { character: true, insurance: true }, orderBy: { defaultedAt: 'asc' } }),
   ]);
 
   const queueActions = [
+    ...insuranceClaims.map((loan) => ({
+      type: 'PROCESS_INSURANCE_CLAIM' as const,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.principalAmount * (loan.insurance?.coveragePercent ?? 0.8),
+      description: `Process insurance claim for ${loan.character.characterName} — ${((loan.insurance?.coveragePercent ?? 0.8) * 100).toFixed(0)}% of ${loan.principalAmount.toLocaleString()} ISK`,
+      createdAt: loan.defaultedAt?.toISOString() ?? loan.updatedAt.toISOString(),
+      urgent: true,
+    })),
     ...liquidationEligible.map((loan) => ({
       type: 'LIQUIDATE_COLLATERAL' as const,
       loanId: loan.id,

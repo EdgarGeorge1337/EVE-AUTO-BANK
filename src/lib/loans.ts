@@ -271,6 +271,43 @@ export async function processPayment(
 }
 
 
+export async function processInsuranceClaim(
+  loanId: string
+): Promise<{ success: boolean; claimAmount?: number; error?: string }> {
+  const loan = await db.loan.findUnique({
+    where: { id: loanId },
+    include: { insurance: true },
+  });
+  if (!loan) return { success: false, error: 'Loan not found' };
+  if (loan.status !== 'DEFAULTED') return { success: false, error: 'Insurance claims can only be filed on defaulted loans' };
+  if (!loan.insurance) return { success: false, error: 'This loan has no insurance' };
+  if (!loan.insurance.claimable) return { success: false, error: 'Insurance claim already processed' };
+
+  const claimAmount = loan.principalAmount * loan.insurance.coveragePercent;
+
+  await db.$transaction([
+    db.loanInsurance.update({
+      where: { loanId },
+      data: {
+        claimable: false,
+        claimedAt: new Date(),
+        claimAmount,
+      },
+    }),
+    db.auditLog.create({
+      data: {
+        loanId,
+        characterId: loan.characterId,
+        action: 'INSURANCE_CLAIM_PROCESSED',
+        description: `Insurance claim processed: ${claimAmount.toLocaleString()} ISK (${(loan.insurance.coveragePercent * 100).toFixed(0)}% of ${loan.principalAmount.toLocaleString()} ISK principal)`,
+        metadata: JSON.stringify({ claimAmount, coveragePercent: loan.insurance.coveragePercent, principalAmount: loan.principalAmount }),
+      },
+    }),
+  ]);
+
+  return { success: true, claimAmount };
+}
+
 export async function liquidateCollateral(
   loanId: string
 ): Promise<{ success: boolean; liquidatedValue?: number; error?: string }> {

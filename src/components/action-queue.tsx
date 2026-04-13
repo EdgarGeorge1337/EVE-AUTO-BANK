@@ -15,6 +15,11 @@ const ACTION_CONFIG: Record<ActionType, { label: string; color: string; step: st
     color: 'text-red-400 border-red-500/30 bg-red-500/5',
     step: 'Grace period has expired. Sell the PLEX collateral in-game (Jita market), then click Mark as Done to record the default.',
   },
+  PROCESS_INSURANCE_CLAIM: {
+    label: 'Insurance Claim',
+    color: 'text-purple-400 border-purple-500/30 bg-purple-500/5',
+    step: 'This loan had insurance. Record the payout below — no in-game action needed, this is an accounting entry.',
+  },
   ACCEPT_COLLATERAL_CONTRACT: {
     label: 'Accept PLEX Contract',
     color: 'text-amber-400 border-amber-500/30 bg-amber-500/5',
@@ -54,6 +59,8 @@ function ActionCard({ action, onDone }: { action: AdminAction; onDone: () => voi
         ? `/api/admin/loans/${action.loanId}/mark-isk-sent`
         : action.type === 'LIQUIDATE_COLLATERAL'
         ? `/api/admin/loans/${action.loanId}/liquidate`
+        : action.type === 'PROCESS_INSURANCE_CLAIM'
+        ? `/api/admin/loans/${action.loanId}/insurance-claim`
         : `/api/admin/loans/${action.loanId}/mark-collateral-returned`;
 
     const body = needsContractId ? { contractId: contractId.trim() } : {};

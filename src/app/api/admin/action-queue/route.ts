@@ -7,7 +7,8 @@ export type ActionType =
   | 'ACCEPT_COLLATERAL_CONTRACT'
   | 'SEND_ISK'
   | 'RETURN_COLLATERAL'
-  | 'LIQUIDATE_COLLATERAL';
+  | 'LIQUIDATE_COLLATERAL'
+  | 'PROCESS_INSURANCE_CLAIM';
 
 export interface AdminAction {
   type: ActionType;
@@ -29,7 +30,7 @@ export async function GET() {
   const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
   const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
 
-  const [approvedLoans, activeNoIsk, completedNoReturn, liquidationEligible] = await Promise.all([
+  const [approvedLoans, activeNoIsk, completedNoReturn, liquidationEligible, insuranceClaims] = await Promise.all([
     db.loan.findMany({
       where: { status: 'APPROVED', collateralContractId: null },
       include: { character: true },
@@ -50,10 +51,25 @@ export async function GET() {
       include: { character: true },
       orderBy: { overdueAt: 'asc' },
     }),
+    db.loan.findMany({
+      where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimable: true } },
+      include: { character: true, insurance: true },
+      orderBy: { defaultedAt: 'asc' },
+    }),
   ]);
 
   const actions: AdminAction[] = [
-    // Urgent: liquidations first
+    // Urgent: liquidations first, then insurance claims
+    ...insuranceClaims.map((loan) => ({
+      type: 'PROCESS_INSURANCE_CLAIM' as ActionType,
+      loanId: loan.id,
+      characterName: loan.character.characterName,
+      characterId: loan.character.characterId,
+      amount: loan.principalAmount * (loan.insurance?.coveragePercent ?? 0.8),
+      description: `Process insurance claim for ${loan.character.characterName} — ${((loan.insurance?.coveragePercent ?? 0.8) * 100).toFixed(0)}% of ${loan.principalAmount.toLocaleString()} ISK`,
+      createdAt: loan.defaultedAt?.toISOString() ?? loan.updatedAt.toISOString(),
+      urgent: true,
+    })),
     ...liquidationEligible.map((loan) => ({
       type: 'LIQUIDATE_COLLATERAL' as ActionType,
       loanId: loan.id,
