@@ -8,6 +8,7 @@ import { getPoolStats } from '@/lib/insurance';
 import { AppraisalTool } from '@/components/appraisal-tool';
 import { ActionQueue } from '@/components/action-queue';
 import { InsuranceClaimQueue } from '@/components/insurance-claim-queue';
+import { AnalyticsDashboard } from '@/components/analytics-dashboard';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -27,9 +28,11 @@ const STATUS_COLORS: Record<string, string> = {
   CANCELLED: 'text-slate-400',
 };
 
-export default async function AdminPage() {
+export default async function AdminPage({ searchParams }: { searchParams: Promise<{ success?: string; error?: string; connected?: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.isAdmin) redirect('/dashboard');
+
+  const { success, error, connected } = await searchParams;
 
   const gracePeriodDays = parseInt(process.env.GRACE_PERIOD_DAYS ?? '7');
   const graceCutoff = new Date(Date.now() - gracePeriodDays * 24 * 60 * 60 * 1000);
@@ -56,10 +59,10 @@ export default async function AdminPage() {
         character: { select: { characterName: true } },
       },
     }),
-    db.loan.findMany({ where: { status: 'APPROVED', collateralContractId: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'APPROVED', collateralContractId: null }, include: { character: true, collateralItems: true }, orderBy: { updatedAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'ACTIVE', iskSentAt: null }, include: { character: true }, orderBy: { updatedAt: 'asc' } }),
-    db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true }, orderBy: { completedAt: 'asc' } }),
-    db.loan.findMany({ where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } }, include: { character: true }, orderBy: { overdueAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'COMPLETED', returnContractId: null }, include: { character: true, collateralItems: true }, orderBy: { completedAt: 'asc' } }),
+    db.loan.findMany({ where: { status: 'OVERDUE', overdueAt: { lt: graceCutoff } }, include: { character: true, collateralItems: true }, orderBy: { overdueAt: 'asc' } }),
     db.loan.findMany({ where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimable: true } }, include: { character: true, insurance: true }, orderBy: { defaultedAt: 'asc' } }),
     // Claims explicitly filed by borrowers awaiting review
     db.loan.findMany({
@@ -85,8 +88,11 @@ export default async function AdminPage() {
       loanId: loan.id,
       characterName: loan.character.characterName,
       characterId: loan.character.characterId,
-      amount: loan.collateralPlexQty,
-      description: `Liquidate ${loan.collateralPlexQty} PLEX from ${loan.character.characterName} — grace period expired`,
+      amount: loan.collateralType === 'MIXED' ? loan.collateralPlexValue : loan.collateralPlexQty,
+      collateralType: loan.collateralType as 'PLEX' | 'MIXED',
+      description: loan.collateralType === 'MIXED'
+        ? `Liquidate ${(loan as typeof loan & { collateralItems: { typeName: string }[] }).collateralItems.length} items from ${loan.character.characterName} — grace period expired`
+        : `Liquidate ${loan.collateralPlexQty} PLEX from ${loan.character.characterName} — grace period expired`,
       createdAt: loan.overdueAt?.toISOString() ?? loan.updatedAt.toISOString(),
       urgent: true,
     })),
@@ -95,8 +101,11 @@ export default async function AdminPage() {
       loanId: loan.id,
       characterName: loan.character.characterName,
       characterId: loan.character.characterId,
-      amount: loan.collateralPlexQty,
-      description: `Accept contract from ${loan.character.characterName} for ${loan.collateralPlexQty} PLEX`,
+      amount: loan.collateralType === 'MIXED' ? loan.collateralPlexValue : loan.collateralPlexQty,
+      collateralType: loan.collateralType as 'PLEX' | 'MIXED',
+      description: loan.collateralType === 'MIXED'
+        ? `Accept contract from ${loan.character.characterName} for ${(loan as typeof loan & { collateralItems: { typeName: string }[] }).collateralItems.length} items (${formatISK(loan.collateralPlexValue)})`
+        : `Accept contract from ${loan.character.characterName} for ${loan.collateralPlexQty} PLEX`,
       createdAt: loan.updatedAt.toISOString(),
     })),
     ...activeNoIsk.map((loan) => ({
@@ -113,14 +122,22 @@ export default async function AdminPage() {
       loanId: loan.id,
       characterName: loan.character.characterName,
       characterId: loan.character.characterId,
-      amount: loan.collateralPlexQty,
-      description: `Return ${loan.collateralPlexQty} PLEX to ${loan.character.characterName}`,
+      amount: loan.collateralType === 'MIXED' ? loan.collateralPlexValue : loan.collateralPlexQty,
+      collateralType: loan.collateralType as 'PLEX' | 'MIXED',
+      description: loan.collateralType === 'MIXED'
+        ? `Return ${(loan as typeof loan & { collateralItems: { typeName: string }[] }).collateralItems.length} items to ${loan.character.characterName}`
+        : `Return ${loan.collateralPlexQty} PLEX to ${loan.character.characterName}`,
       createdAt: loan.completedAt?.toISOString() ?? loan.updatedAt.toISOString(),
     })),
   ];
 
   return (
     <div className="space-y-8">
+      {(success || error || connected) && (
+        <div className={`rounded-lg px-4 py-3 text-sm font-medium ${error ? 'bg-red-500/10 border border-red-500/30 text-red-300' : 'bg-green-500/10 border border-green-500/30 text-green-300'}`}>
+          {error ? `Error: ${error}` : connected ? 'Bank character connected successfully.' : success}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
         <form action="/api/admin/monitor" method="POST">
@@ -329,6 +346,12 @@ export default async function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* Analytics */}
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold text-white">Analytics</h2>
+        <AnalyticsDashboard />
+      </div>
 
       {/* Janice Appraisal Tool */}
       <div className="space-y-3">

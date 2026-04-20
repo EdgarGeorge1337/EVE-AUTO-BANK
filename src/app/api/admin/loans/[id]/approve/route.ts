@@ -11,9 +11,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => ({}));
   const result = await approveLoan(id, body.reason);
 
+  const base = process.env.NEXTAUTH_URL ?? 'https://evebank.gamehostingnode.com';
+
   if (!result.success) {
-    return NextResponse.json({ error: result.error }, { status: 422 });
+    return NextResponse.redirect(new URL(`/admin?error=${encodeURIComponent(result.error ?? 'approve_failed')}`, base));
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.redirect(new URL('/admin?success=Loan+approved+successfully', base));
 }

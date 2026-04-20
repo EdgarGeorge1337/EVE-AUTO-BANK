@@ -15,7 +15,8 @@ export interface AdminAction {
   loanId: string;
   characterName: string;
   characterId: number;
-  amount: number;       // ISK for SEND_ISK, PLEX qty for collateral actions
+  amount: number;       // ISK for SEND_ISK/MIXED collateral, PLEX qty for PLEX collateral
+  collateralType?: 'PLEX' | 'MIXED';
   description: string;
   createdAt: string;
   urgent?: boolean;

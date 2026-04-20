@@ -111,11 +111,12 @@ model Loan {
   approvalReason    String?
   autoApprovalEligible Boolean @default(false)
 
-  // Collateral (PLEX)
-  collateralPlexQty     Int
-  collateralPlexValue   Float    // value at time of loan
+  // Collateral
+  collateralType        String   @default("PLEX") // PLEX | MIXED
+  collateralPlexQty     Int      @default(0)
+  collateralPlexValue   Float    // total collateral value at time of loan
   collateralContractId  String?  // ESI contract ID
-  returnContractId      String?  // contract ID for returning PLEX
+  returnContractId      String?  // contract ID for returning collateral
   ltvRatio              Float    // loan-to-value ratio
 
   // Insurance
@@ -135,10 +136,11 @@ model Loan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  character   Character      @relation(fields: [characterId], references: [id])
-  payments    Payment[]
-  insurance   LoanInsurance?
-  auditLogs   AuditLog[]
+  character       Character       @relation(fields: [characterId], references: [id])
+  payments        Payment[]
+  insurance       LoanInsurance?
+  auditLogs       AuditLog[]
+  collateralItems CollateralItem[]
 
   @@index([characterId])
   @@index([status])
@@ -207,6 +209,20 @@ model LoanInsurance {
   createdAt DateTime @default(now())
 
   loan Loan @relation(fields: [loanId], references: [id])
+}
+
+model CollateralItem {
+  id         String @id @default(cuid())
+  loanId     String
+  typeName   String
+  typeId     Int
+  qty        Int
+  unitValue  Float  // Janice split price at time of loan
+  totalValue Float
+
+  loan Loan @relation(fields: [loanId], references: [id])
+
+  @@index([loanId])
 }
 
 model InsurancePool {

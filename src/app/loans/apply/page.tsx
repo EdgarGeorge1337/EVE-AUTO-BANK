@@ -69,6 +69,9 @@ export default function LoanApplyPage() {
   const [appraisal, setAppraisal] = useState<AppraisalResult | null>(null);
   const [appraising, setAppraising] = useState(false);
   const [appraisalError, setAppraisalError] = useState('');
+  const [importingAssets, setImportingAssets] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [needsAssetConnect, setNeedsAssetConnect] = useState(false);
 
   const [termDays, setTermDays] = useState(30);
   const [coverageTier, setCoverageTier] = useState<CoverageTier | null>(null);
@@ -77,7 +80,18 @@ export default function LoanApplyPage() {
 
   useEffect(() => {
     fetch('/api/public/defaults').then((r) => r.json()).then(setDefaults);
-    fetch('/api/admin/monitoring/plex-price').then((r) => r.json()).then((d) => setPlexPrice(d.price));
+    fetch('/api/public/plex-price').then((r) => r.json()).then((d) => setPlexPrice(d.price));
+
+    // Check query params for asset connect result
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('assetsConnected')) {
+      setCollateralMode('multi');
+      window.history.replaceState({}, '', '/loans/apply');
+    }
+    if (params.get('assetError')) {
+      setImportError(`Asset connection failed: ${params.get('assetError')}`);
+      window.history.replaceState({}, '', '/loans/apply');
+    }
   }, []);
 
   if (status === 'unauthenticated') {
@@ -101,6 +115,28 @@ export default function LoanApplyPage() {
   const wantsInsurance = coverageTier !== null;
   const insurancePremium = wantsInsurance ? calcPremium(principal, ltv, termDays, coverageTier!) : 0;
   const ltvOk = ltv > 0 && ltv <= maxLtv;
+
+  async function handleImportAssets() {
+    setImportingAssets(true);
+    setImportError('');
+    setNeedsAssetConnect(false);
+    try {
+      const res = await fetch('/api/user/assets');
+      const data = await res.json();
+      if (res.status === 403) {
+        setNeedsAssetConnect(true);
+      } else if (!res.ok) {
+        setImportError(data.error ?? 'Failed to fetch assets');
+      } else {
+        setItemText(data.rawText);
+        setAppraisal(null);
+      }
+    } catch {
+      setImportError('Network error fetching assets');
+    } finally {
+      setImportingAssets(false);
+    }
+  }
 
   const handleAppraise = useCallback(async () => {
     const text = itemText.trim();
@@ -270,10 +306,32 @@ export default function LoanApplyPage() {
             </>
           ) : (
             <>
-              <div className="text-sm text-slate-400">
-                Paste items in format <code className="text-amber-400">500 PLEX</code> — one per line.
-                Priced via <span className="text-slate-300">Janice</span> (Jita 4-4 split price).
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-400">
+                  Paste items in format <code className="text-amber-400">500 PLEX</code> — one per line.
+                  Priced via <span className="text-slate-300">Janice</span> (Jita 4-4 split price).
+                </div>
+                <button
+                  type="button"
+                  onClick={handleImportAssets}
+                  disabled={importingAssets}
+                  className="text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded transition-colors whitespace-nowrap"
+                >
+                  {importingAssets ? 'Importing...' : '⬇ Import from EVE'}
+                </button>
               </div>
+              {importError && <div className="text-xs text-red-400">{importError}</div>}
+              {needsAssetConnect && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 text-sm flex items-center justify-between gap-3">
+                  <span className="text-blue-300">Authorize EVE asset access to import your items automatically.</span>
+                  <a
+                    href="/api/user/assets/connect"
+                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-xs whitespace-nowrap transition-colors"
+                  >
+                    Connect EVE Assets
+                  </a>
+                </div>
+              )}
               <div>
                 <textarea
                   value={itemText}

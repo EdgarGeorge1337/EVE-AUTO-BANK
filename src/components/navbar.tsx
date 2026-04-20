@@ -15,8 +15,8 @@ export function Navbar() {
         </Link>
 
         <div className="flex items-center gap-6 text-sm">
-          <Link href="/loans" className="text-slate-300 hover:text-white transition-colors">
-            Loans
+          <Link href="/loans/apply" className="text-slate-300 hover:text-white transition-colors">
+            Apply
           </Link>
           <Link href="/transparency" className="text-slate-300 hover:text-white transition-colors">
             Transparency

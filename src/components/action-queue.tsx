@@ -96,7 +96,11 @@ function ActionCard({ action, onDone }: { action: AdminAction; onDone: () => voi
             <div className="text-2xl font-bold text-white mt-1">{formatISK(action.amount)}</div>
           )}
           {(action.type === 'ACCEPT_COLLATERAL_CONTRACT' || action.type === 'RETURN_COLLATERAL') && (
-            <div className="text-lg font-bold text-white mt-1">{action.amount.toLocaleString()} PLEX</div>
+            <div className="text-lg font-bold text-white mt-1">
+              {action.collateralType === 'MIXED'
+                ? `${formatISK(action.amount)} multi-asset`
+                : `${action.amount.toLocaleString()} PLEX`}
+            </div>
           )}
         </div>
         <a

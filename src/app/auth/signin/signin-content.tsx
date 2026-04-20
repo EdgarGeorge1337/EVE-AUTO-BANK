@@ -3,6 +3,8 @@
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 
+const DEV_MODE = process.env.NEXT_PUBLIC_DEV_MODE === 'true';
+
 export default function SignInContent() {
   const params = useSearchParams();
   const callbackUrl = params.get('callbackUrl') ?? '/dashboard';
@@ -14,6 +16,7 @@ export default function SignInContent() {
         <h1 className="text-3xl font-bold text-white">Sign In to EVE Auto Bank</h1>
         <p className="text-slate-400">Authenticate with your EVE Online character to access banking services.</p>
       </div>
+
       <button
         onClick={() => signIn('eveonline', { callbackUrl })}
         className="flex items-center gap-3 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold px-8 py-4 rounded-xl text-lg transition-colors shadow-lg shadow-amber-500/20"
@@ -23,10 +26,40 @@ export default function SignInContent() {
         </svg>
         Sign In with EVE Online
       </button>
-      <p className="text-xs text-slate-500 text-center max-w-sm">
-        We request read-only ESI scopes for wallet journal, contracts, and assets.
-        Your credentials are never stored.
-      </p>
+
+      {DEV_MODE && (
+        <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+          <div className="flex items-center gap-2 w-full">
+            <div className="flex-1 h-px bg-slate-700" />
+            <span className="text-xs text-slate-500 font-mono">DEV MODE</span>
+            <div className="flex-1 h-px bg-slate-700" />
+          </div>
+          <button
+            onClick={() => signIn('dev', { role: 'user', callbackUrl })}
+            className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold px-6 py-3 rounded-lg text-sm transition-colors border border-slate-600"
+          >
+            <span className="text-base">👤</span>
+            Sign in as Dev User
+          </button>
+          <button
+            onClick={() => signIn('dev', { role: 'admin', callbackUrl })}
+            className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold px-6 py-3 rounded-lg text-sm transition-colors border border-amber-700"
+          >
+            <span className="text-base">🔑</span>
+            Sign in as Dev Admin
+          </button>
+          <p className="text-xs text-slate-600 text-center">
+            Dev accounts only — not visible in production
+          </p>
+        </div>
+      )}
+
+      {!DEV_MODE && (
+        <p className="text-xs text-slate-500 text-center max-w-sm">
+          We request read-only ESI scopes for wallet journal, contracts, and assets.
+          Your credentials are never stored.
+        </p>
+      )}
     </div>
   );
 }

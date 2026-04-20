@@ -40,6 +40,7 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
       insurance: true,
       auditLogs: { orderBy: { createdAt: 'desc' }, take: 20 },
       character: { select: { characterId: true, characterName: true } },
+      collateralItems: true,
     },
   });
 
@@ -53,8 +54,14 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
   const progress = Math.min((loan.amountRepaid / totalDue) * 100, 100);
   const bankCharName = process.env.ADMIN_CHARACTER_NAME ?? 'Bank Character';
 
-  const plexResult = await appraiseItems([{ typeName: 'PLEX', qty: loan.collateralPlexQty }]).catch(() => null);
-  const liveCollateralValue = plexResult?.totalValue ?? null;
+  const isMixed = loan.collateralType === 'MIXED';
+
+  // Live collateral re-appraisal — use appropriate items
+  const liveAppraisalItems = isMixed && loan.collateralItems.length > 0
+    ? loan.collateralItems.map((i) => ({ typeName: i.typeName, qty: i.qty }))
+    : [{ typeName: 'PLEX', qty: loan.collateralPlexQty }];
+  const liveResult = await appraiseItems(liveAppraisalItems).catch(() => null);
+  const liveCollateralValue = liveResult?.totalValue ?? null;
   const liveLtv = liveCollateralValue ? loan.principalAmount / liveCollateralValue : null;
   const daysLeft = Math.ceil((new Date(loan.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
@@ -118,19 +125,45 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
         <h2 className="font-semibold text-white">Loan Terms & Collateral</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
           {[
-            ['PLEX Collateral', `${loan.collateralPlexQty.toLocaleString()} PLEX`],
+            ['Collateral Type', isMixed ? 'Multi-Asset' : 'PLEX'],
+            !isMixed ? ['PLEX Quantity', `${loan.collateralPlexQty.toLocaleString()} PLEX`] : null,
             ['Collateral Value', formatISK(loan.collateralPlexValue)],
             ['LTV Ratio', `${(loan.ltvRatio * 100).toFixed(1)}%`],
             ['Interest Rate', `${(loan.interestRate * 100).toFixed(0)}%`],
             ['Term', `${loan.termDays} days`],
             ['Due Date', new Date(loan.dueDate).toLocaleDateString()],
-          ].map(([label, value]) => (
+          ].filter((x): x is string[] => x !== null).map(([label, value]) => (
             <div key={label}>
               <div className="text-slate-400">{label}</div>
               <div className="text-white font-semibold mt-0.5">{value}</div>
             </div>
           ))}
         </div>
+
+        {/* Multi-asset collateral basket */}
+        {isMixed && loan.collateralItems.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-slate-300">Collateral Basket</div>
+            <div className="bg-slate-800/50 rounded divide-y divide-slate-700/50">
+              {loan.collateralItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <div>
+                    <span className="text-white">{item.typeName}</span>
+                    <span className="text-slate-400 ml-2">×{item.qty.toLocaleString()}</span>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-white">{formatISK(item.totalValue)}</div>
+                    <div className="text-xs text-slate-500">{formatISK(item.unitValue)} each</div>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between px-3 py-2 text-sm font-semibold">
+                <span className="text-slate-300">Total at origination</span>
+                <span className="text-amber-400">{formatISK(loan.collateralItems.reduce((s, i) => s + i.totalValue, 0))}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {loan.collateralContractId && (
           <div className="text-sm">
@@ -197,7 +230,7 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
           <h2 className="font-semibold text-white">Live Collateral Status</h2>
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <div className="text-slate-400">Current PLEX Value</div>
+              <div className="text-slate-400">{isMixed ? 'Current Basket Value' : 'Current PLEX Value'}</div>
               <div className="text-white font-semibold">
                 {liveCollateralValue >= 1e9
                   ? `${(liveCollateralValue / 1e9).toFixed(2)}B ISK`
@@ -219,7 +252,29 @@ export default async function LoanDetailPage({ params }: { params: Promise<{ id:
           </div>
           {liveLtv > 0.85 && (
             <div className="bg-red-500/10 border border-red-500/30 rounded p-3 text-sm text-red-300">
-              ⚠ Collateral at risk — PLEX price has dropped. Repay early or add collateral to avoid liquidation.
+              ⚠ Collateral at risk — {isMixed ? 'asset values have dropped' : 'PLEX price has dropped'}. Repay early or add collateral to avoid liquidation.
+            </div>
+          )}
+          {/* Per-item live breakdown for mixed loans */}
+          {isMixed && liveResult && liveResult.items.length > 0 && (
+            <div className="bg-slate-800/50 rounded divide-y divide-slate-700/50 text-sm mt-1">
+              {liveResult.items.map((item) => {
+                const orig = loan.collateralItems.find((c) => c.typeName.toLowerCase() === item.name.toLowerCase());
+                const change = orig ? ((item.totalValue - orig.totalValue) / orig.totalValue) * 100 : 0;
+                return (
+                  <div key={item.typeId} className="flex items-center justify-between px-3 py-1.5">
+                    <span className="text-slate-300">{item.name} ×{item.qty.toLocaleString()}</span>
+                    <div className="text-right">
+                      <span className="text-white">{formatISK(item.totalValue)}</span>
+                      {orig && (
+                        <span className={`ml-2 text-xs ${change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {change >= 0 ? '+' : ''}{change.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

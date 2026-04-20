@@ -35,22 +35,55 @@ export interface LoanApplicationResult {
 }
 
 export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApplicationResult> {
-  const { characterId, principalAmount, plexQty, termDays, wantsInsurance, coverageTier } = input;
+  const { characterId, principalAmount, plexQty, collateralItems, termDays, wantsInsurance, coverageTier } = input;
   const term = termDays ?? DEFAULT_TERM_DAYS;
   const tier: CoverageTier = coverageTier ?? 'STANDARD';
 
-  // Appraise collateral
-  let collateralValue: number;
-  if (!plexQty) {
-    return { success: false, error: 'PLEX collateral required (multi-asset collateral not yet supported)' };
+  if (!plexQty && (!collateralItems || collateralItems.length === 0)) {
+    return { success: false, error: 'Collateral required — provide PLEX quantity or item list' };
   }
-  try {
-    collateralValue = await appraisePlexValue(plexQty);
-  } catch {
-    // Fall back to cached price
-    const cached = await db.plexPriceCache.findFirst({ orderBy: { fetchedAt: 'desc' } });
-    if (!cached) return { success: false, error: 'Unable to appraise PLEX - no price data available' };
-    collateralValue = cached.price * plexQty;
+
+  // ── Appraise collateral ──────────────────────────────────────
+  let collateralValue: number;
+  let collateralType: 'PLEX' | 'MIXED' = 'PLEX';
+  let appraisedItems: { typeName: string; typeId: number; qty: number; unitValue: number; totalValue: number }[] = [];
+
+  if (plexQty) {
+    // PLEX-only path — fast, single price lookup
+    try {
+      collateralValue = await appraisePlexValue(plexQty);
+    } catch {
+      const cached = await db.plexPriceCache.findFirst({ orderBy: { fetchedAt: 'desc' } });
+      if (!cached) return { success: false, error: 'Unable to appraise PLEX — no price data available' };
+      collateralValue = cached.price * plexQty;
+    }
+  } else {
+    // Multi-asset path — Janice appraisal
+    collateralType = 'MIXED';
+    try {
+      const appraisal = await appraiseItems(collateralItems!);
+      if (appraisal.items.length === 0) {
+        return { success: false, error: 'None of the provided items could be appraised — check item names' };
+      }
+      const unknownCount = collateralItems!.length - appraisal.items.length;
+      if (unknownCount > 0) {
+        // Partial appraisal — still allow but warn via audit log later
+      }
+      collateralValue = appraisal.totalValue;
+      appraisedItems = appraisal.items.map((i) => ({
+        typeName: i.name,
+        typeId: i.typeId,
+        qty: i.qty,
+        unitValue: i.unitPrice,
+        totalValue: i.totalValue,
+      }));
+    } catch (err) {
+      return { success: false, error: `Appraisal failed: ${String(err)}` };
+    }
+  }
+
+  if (collateralValue <= 0) {
+    return { success: false, error: 'Collateral has no appraised value' };
   }
 
   const ltv = principalAmount / collateralValue;
@@ -72,7 +105,8 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
   const autoApprovalEligible =
     character.creditScore >= 650 &&
     character.totalDefaulted === 0 &&
-    ltv <= 0.6;
+    ltv <= 0.6 &&
+    collateralType === 'PLEX'; // Mixed collateral always requires manual review
 
   // Risk-adjusted insurance premium
   let insurancePremium = 0;
@@ -95,11 +129,15 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
       status: autoApprovalEligible ? 'APPROVED' : 'PENDING',
       approvalReason: autoApprovalEligible ? 'Auto-approved: good credit standing' : null,
       autoApprovalEligible,
-      collateralPlexQty: plexQty,
+      collateralType,
+      collateralPlexQty: plexQty ?? 0,
       collateralPlexValue: collateralValue,
       ltvRatio: ltv,
       hasInsurance: wantsInsurance ?? false,
       nextPaymentDue: dueDate,
+      collateralItems: appraisedItems.length > 0
+        ? { createMany: { data: appraisedItems } }
+        : undefined,
       insurance: wantsInsurance
         ? {
             create: {
@@ -113,18 +151,21 @@ export async function applyForLoan(input: LoanApplicationInput): Promise<LoanApp
     },
   });
 
-  // Track premium in insurance pool
   if (wantsInsurance && insurancePremium > 0) {
     await poolAddPremium(insurancePremium);
   }
+
+  const collateralDesc = plexQty
+    ? `${plexQty} PLEX collateral`
+    : `${appraisedItems.length} items, total ${collateralValue.toLocaleString()} ISK`;
 
   await db.auditLog.create({
     data: {
       loanId: loan.id,
       characterId,
       action: autoApprovalEligible ? 'LOAN_AUTO_APPROVED' : 'LOAN_APPLIED',
-      description: `Loan application for ${principalAmount.toLocaleString()} ISK, ${plexQty} PLEX collateral`,
-      metadata: JSON.stringify({ ltv, collateralValue, autoApprovalEligible }),
+      description: `Loan application for ${principalAmount.toLocaleString()} ISK — ${collateralDesc}`,
+      metadata: JSON.stringify({ ltv, collateralValue, collateralType, autoApprovalEligible }),
     },
   });
 
@@ -414,20 +455,33 @@ export async function denyInsuranceClaim(
 export async function liquidateCollateral(
   loanId: string
 ): Promise<{ success: boolean; liquidatedValue?: number; error?: string }> {
-  const loan = await db.loan.findUnique({ where: { id: loanId } });
+  const loan = await db.loan.findUnique({
+    where: { id: loanId },
+    include: { collateralItems: true },
+  });
   if (!loan) return { success: false, error: 'Loan not found' };
   if (loan.status !== 'OVERDUE') return { success: false, error: `Loan must be OVERDUE to liquidate (status: ${loan.status})` };
 
-  // Get current PLEX value via Janice
+  // Re-appraise collateral at current Janice prices
   let liquidatedValue: number;
   try {
-    const appraisal = await appraiseItems([{ typeName: 'PLEX', qty: loan.collateralPlexQty }]);
-    liquidatedValue = appraisal.totalValue;
+    if (loan.collateralType === 'MIXED' && loan.collateralItems.length > 0) {
+      const appraisal = await appraiseItems(
+        loan.collateralItems.map((i) => ({ typeName: i.typeName, qty: i.qty }))
+      );
+      liquidatedValue = appraisal.totalValue > 0 ? appraisal.totalValue : loan.collateralPlexValue;
+    } else {
+      const appraisal = await appraiseItems([{ typeName: 'PLEX', qty: loan.collateralPlexQty }]);
+      liquidatedValue = appraisal.totalValue;
+    }
   } catch {
-    // Fall back to cached price
+    // Fall back to stored collateral value at loan origination
     const cached = await db.plexPriceCache.findFirst({ orderBy: { fetchedAt: 'desc' } });
-    if (!cached) return { success: false, error: 'Cannot determine PLEX value — no price data available' };
-    liquidatedValue = cached.price * loan.collateralPlexQty;
+    if (loan.collateralType === 'PLEX' && cached) {
+      liquidatedValue = cached.price * loan.collateralPlexQty;
+    } else {
+      liquidatedValue = loan.collateralPlexValue;
+    }
   }
 
   const now = new Date();

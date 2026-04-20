@@ -157,33 +157,39 @@ export async function detectContracts(): Promise<{ matched: number; errors: stri
 // ── Bank Vault Audit ──────────────────────────────────────────
 // Verifies actual PLEX held matches sum of active loan collateral
 
-export async function auditVault(): Promise<{ held: number; expected: number; discrepancy: number; error?: string }> {
+export async function auditVault(): Promise<{ held: number; expected: number; discrepancy: number; mixedLoans: number; error?: string }> {
   let accessToken: string;
   try {
     accessToken = await getBankAccessToken();
   } catch (err) {
-    return { held: 0, expected: 0, discrepancy: 0, error: String(err) };
+    return { held: 0, expected: 0, discrepancy: 0, mixedLoans: 0, error: String(err) };
   }
 
   const [held, activeLoans] = await Promise.all([
     getPlexAssetBalance(ADMIN_CHARACTER_ID, accessToken),
-    db.loan.findMany({ where: { status: { in: ['ACTIVE', 'OVERDUE'] } }, select: { collateralPlexQty: true } }),
+    db.loan.findMany({
+      where: { status: { in: ['ACTIVE', 'OVERDUE'] } },
+      select: { collateralPlexQty: true, collateralType: true },
+    }),
   ]);
 
-  const expected = activeLoans.reduce((sum, l) => sum + l.collateralPlexQty, 0);
+  // Only count PLEX loans — mixed collateral is tracked separately
+  const plexLoans = activeLoans.filter((l) => l.collateralType !== 'MIXED');
+  const mixedLoans = activeLoans.length - plexLoans.length;
+  const expected = plexLoans.reduce((sum, l) => sum + l.collateralPlexQty, 0);
   const discrepancy = held - expected;
 
   if (discrepancy !== 0) {
     await db.auditLog.create({
       data: {
         action: 'VAULT_DISCREPANCY',
-        description: `PLEX vault audit: holding ${held}, expected ${expected}, discrepancy ${discrepancy}`,
-        metadata: JSON.stringify({ held, expected, discrepancy }),
+        description: `PLEX vault audit: holding ${held}, expected ${expected}, discrepancy ${discrepancy}${mixedLoans > 0 ? ` (${mixedLoans} mixed-collateral loan(s) excluded)` : ''}`,
+        metadata: JSON.stringify({ held, expected, discrepancy, mixedLoans }),
       },
     });
   }
 
-  return { held, expected, discrepancy };
+  return { held, expected, discrepancy, mixedLoans };
 }
 
 // ── PLEX Price Update ─────────────────────────────────────────
