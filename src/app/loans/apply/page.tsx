@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useSession } from 'next-auth/react';
+import { useSession, signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -136,6 +136,10 @@ export default function LoanApplyPage() {
     } finally {
       setImportingAssets(false);
     }
+  }
+
+  function handleConnectAssets() {
+    signIn('eveonline', { callbackUrl: '/loans/apply?assetsConnected=1' }, { scope: 'publicData esi-assets.read_assets.v1' });
   }
 
   const handleAppraise = useCallback(async () => {
@@ -324,12 +328,13 @@ export default function LoanApplyPage() {
               {needsAssetConnect && (
                 <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 text-sm flex items-center justify-between gap-3">
                   <span className="text-blue-300">Authorize EVE asset access to import your items automatically.</span>
-                  <a
-                    href="/api/user/assets/connect"
+                  <button
+                    type="button"
+                    onClick={handleConnectAssets}
                     className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-xs whitespace-nowrap transition-colors"
                   >
                     Connect EVE Assets
-                  </a>
+                  </button>
                 </div>
               )}
               <div>
