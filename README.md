@@ -326,7 +326,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Issues**: [GitHub Issues](https://github.com/EdgarGeorge1337/EVE-AUTO-BANK/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/EdgarGeorge1337/EVE-AUTO-BANK/discussions)
-- **Contact**: support@evebank.com
+- **Contact**: support_evebank@thegateroom.com
 
 ---
 
