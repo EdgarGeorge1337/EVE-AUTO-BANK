@@ -89,6 +89,9 @@ model Character {
   loans    Loan[]
   payments Payment[]
   auditLogs AuditLog[]
+  trades   TradeOrder[]
+  fundPositions    FundPosition[]
+  fundTransactions FundTransaction[]
 }
 
 // ============================================================
@@ -230,6 +233,202 @@ model InsurancePool {
   premiumsCollected Float    @default(0)
   claimsPaid        Float    @default(0)
   updatedAt         DateTime @updatedAt
+}
+
+// ============================================================
+// TRADING DESK
+// ============================================================
+
+// Bank buys/sells items at Janice-derived quotes with a spread.
+// Like loans, in-game transfers are executed manually by the admin;
+// the order tracks the lifecycle and drives the admin action queue.
+model TradeOrder {
+  id          String @id @default(cuid())
+  characterId String
+
+  side     TradeSide // BUY = player buys from bank, SELL = player sells to bank
+  typeName String
+  typeId   Int
+  qty      Int
+
+  unitPrice   Float // quoted price per unit after spread
+  totalValue  Float // unitPrice * qty
+  marketPrice Float // Janice split price per unit at quote time
+  spreadPct   Float
+
+  status TradeStatus @default(OPEN)
+
+  // Lifecycle timestamps
+  expiresAt          DateTime  // player must transfer before this or the order expires
+  transferReceivedAt DateTime? // bank received ISK (BUY) or item contract (SELL)
+  fulfilledAt        DateTime? // bank delivered items (BUY) or ISK (SELL)
+  cancelledAt        DateTime?
+  contractId         String?   // in-game contract / transfer reference
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@index([characterId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum TradeStatus {
+  OPEN
+  RECEIVED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+// ============================================================
+// INDEX FUND
+// ============================================================
+
+// A bank-operated basket of items. Users subscribe with ISK and
+// receive units at the current NAV per unit; redemptions pay out
+// at NAV. The bank character holds the assets in-game; holdings
+// here mirror what the admin actually bought/sold with fund cash.
+model IndexFund {
+  id               String  @id @default(cuid())
+  name             String
+  description      String
+  status           String  @default("ACTIVE") // ACTIVE | CLOSED
+  managementFeePct Float   @default(0.0)
+  entryFeePct      Float   @default(0.01)
+  unitsOutstanding Float   @default(0)
+  cashBalance      Float   @default(0) // ISK held by the fund, not yet invested
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  holdings     FundHolding[]
+  positions    FundPosition[]
+  transactions FundTransaction[]
+  navSnapshots FundNavSnapshot[]
+}
+
+model FundHolding {
+  id       String @id @default(cuid())
+  fundId   String
+  typeName String
+  typeId   Int
+  qty      Float
+  avgCost  Float // average ISK paid per unit
+
+  updatedAt DateTime @updatedAt
+
+  fund IndexFund @relation(fields: [fundId], references: [id])
+
+  @@unique([fundId, typeId])
+  @@index([fundId])
+}
+
+model FundPosition {
+  id          String @id @default(cuid())
+  fundId      String
+  characterId String
+
+  units       Float @default(0)
+  iskInvested Float @default(0) // lifetime subscriptions (cost basis)
+  iskRedeemed Float @default(0) // lifetime redemptions
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fund      IndexFund @relation(fields: [fundId], references: [id])
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@unique([fundId, characterId])
+  @@index([characterId])
+}
+
+model FundTransaction {
+  id          String @id @default(cuid())
+  fundId      String
+  characterId String
+
+  type       String // SUBSCRIBE | REDEEM
+  iskAmount  Float  // SUBSCRIBE: deposit; REDEEM: payout (set at processing)
+  units      Float? // SUBSCRIBE: issued at processing; REDEEM: units requested
+  navPerUnit Float? // NAV/unit used at processing
+
+  status TradeStatus @default(OPEN)
+
+  expiresAt          DateTime
+  transferReceivedAt DateTime?
+  processedAt        DateTime?
+  cancelledAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fund      IndexFund @relation(fields: [fundId], references: [id])
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@index([fundId])
+  @@index([characterId])
+  @@index([status])
+}
+
+model FundNavSnapshot {
+  id     String @id @default(cuid())
+  fundId String
+
+  nav              Float // total fund value (holdings + cash)
+  navPerUnit       Float
+  holdingsValue    Float
+  cashBalance      Float
+  unitsOutstanding Float
+
+  createdAt DateTime @default(now())
+
+  fund IndexFund @relation(fields: [fundId], references: [id])
+
+  @@index([fundId, createdAt])
+}
+
+// Per-region economy figures from CCP's Monthly Economic Report
+// (mirrored at data.everef.net/ccp/mer/). One row per region per month.
+// These are the "published monthly earnings reports" behind the
+// Sector Reports view — regions act as market sectors.
+model SectorReport {
+  id     String @id @default(cuid())
+  month  String // "2026-06"
+  region String
+
+  minedValue     Float
+  producedValue  Float
+  destroyedValue Float
+  npcBounties    Float
+  loyaltyPoints  Float
+  tradeValue     Float
+
+  createdAt DateTime @default(now())
+
+  @@unique([month, region])
+  @@index([month])
+}
+
+// Market price history for the insights watchlist, captured by the
+// monitoring cycle. Powers 24h/7d change and buy/hold/sell signals.
+model PriceSnapshot {
+  id        String   @id @default(cuid())
+  typeName  String
+  typeId    Int
+  buyMax    Float
+  sellMin   Float
+  splitPrice Float
+  createdAt DateTime @default(now())
+
+  @@index([typeId, createdAt])
 }
 
 // ============================================================

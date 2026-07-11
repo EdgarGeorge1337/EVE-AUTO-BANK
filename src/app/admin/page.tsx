@@ -9,6 +9,8 @@ import { AppraisalTool } from '@/components/appraisal-tool';
 import { ActionQueue } from '@/components/action-queue';
 import { InsuranceClaimQueue } from '@/components/insurance-claim-queue';
 import { AnalyticsDashboard } from '@/components/analytics-dashboard';
+import { InvestmentAdmin } from '@/components/investment-admin';
+import { getActiveFund } from '@/lib/fund';
 import Link from 'next/link';
 
 function formatISK(n: number) {
@@ -69,6 +71,20 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       where: { status: 'DEFAULTED', hasInsurance: true, insurance: { claimStatus: 'PENDING_REVIEW' } },
       include: { character: true, insurance: true },
       orderBy: { updatedAt: 'asc' },
+    }),
+  ]);
+
+  const [activeFund, pendingTradeOrders, pendingFundTxs] = await Promise.all([
+    getActiveFund(),
+    db.tradeOrder.findMany({
+      where: { status: { in: ['OPEN', 'RECEIVED'] } },
+      include: { character: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+    db.fundTransaction.findMany({
+      where: { status: 'OPEN' },
+      include: { character: true },
+      orderBy: { createdAt: 'asc' },
     }),
   ]);
 
@@ -161,6 +177,30 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
           )}
         </h2>
         <ActionQueue initialActions={queueActions} />
+      </div>
+
+      {/* Trading desk + index fund */}
+      <div className="space-y-3">
+        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+          Investments
+          {pendingTradeOrders.length + pendingFundTxs.length > 0 && (
+            <span className="text-sm bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded">
+              {pendingTradeOrders.length + pendingFundTxs.length} pending
+            </span>
+          )}
+        </h2>
+        <InvestmentAdmin
+          hasFund={!!activeFund}
+          fundCash={activeFund?.cashBalance ?? 0}
+          tradeOrders={pendingTradeOrders.map((o) => ({
+            id: o.id, side: o.side, typeName: o.typeName, qty: o.qty,
+            totalValue: o.totalValue, status: o.status, characterName: o.character.characterName,
+          }))}
+          fundTxs={pendingFundTxs.map((t) => ({
+            id: t.id, type: t.type, iskAmount: t.iskAmount, units: t.units,
+            status: t.status, characterName: t.character.characterName,
+          }))}
+        />
       </div>
 
       {/* Stats */}

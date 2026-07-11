@@ -18,6 +18,12 @@ export function Navbar() {
           <Link href="/loans/apply" className="text-slate-300 hover:text-white transition-colors">
             Apply
           </Link>
+          <Link href="/trading" className="text-slate-300 hover:text-white transition-colors">
+            Trading
+          </Link>
+          <Link href="/fund" className="text-slate-300 hover:text-white transition-colors">
+            Fund
+          </Link>
           <Link href="/transparency" className="text-slate-300 hover:text-white transition-colors">
             Transparency
           </Link>

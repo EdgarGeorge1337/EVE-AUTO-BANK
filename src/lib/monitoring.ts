@@ -258,13 +258,23 @@ export async function checkLiquidationEligible(): Promise<{ eligible: number }> 
 // ── Full Monitoring Cycle ─────────────────────────────────────
 
 export async function runMonitoringCycle() {
-  const [payments, contracts, overdue, liquidation, plexPrice, vault] = await Promise.allSettled([
+  const { expireStaleTradeOrders } = await import('@/lib/trading');
+  const { snapshotFundNav, expireStaleFundTransactions } = await import('@/lib/fund');
+  const { capturePriceSnapshots } = await import('@/lib/insights');
+  const { refreshSectorReports } = await import('@/lib/mer');
+
+  const [payments, contracts, overdue, liquidation, plexPrice, vault, tradeExpiry, fundNav, fundExpiry, prices, sectors] = await Promise.allSettled([
     detectPayments(),
     detectContracts(),
     checkOverdueLoans(),
     checkLiquidationEligible(),
     updatePlexPrice(),
     auditVault(),
+    expireStaleTradeOrders(),
+    snapshotFundNav(),
+    expireStaleFundTransactions(),
+    capturePriceSnapshots(),
+    refreshSectorReports(),
   ]);
 
   return {
@@ -274,6 +284,11 @@ export async function runMonitoringCycle() {
     liquidation: liquidation.status === 'fulfilled' ? liquidation.value : { eligible: 0 },
     plexPrice: plexPrice.status === 'fulfilled' ? plexPrice.value : { error: String(plexPrice.reason) },
     vault: vault.status === 'fulfilled' ? vault.value : { held: 0, expected: 0, discrepancy: 0, error: String(vault.reason) },
+    tradeExpiry: tradeExpiry.status === 'fulfilled' ? tradeExpiry.value : { expired: 0 },
+    fundNav: fundNav.status === 'fulfilled' ? fundNav.value : { snapshots: 0 },
+    fundExpiry: fundExpiry.status === 'fulfilled' ? fundExpiry.value : { expired: 0 },
+    prices: prices.status === 'fulfilled' ? prices.value : { captured: 0, errors: [String(prices.reason)] },
+    sectors: sectors.status === 'fulfilled' ? sectors.value : { imported: [], skipped: false, error: String(sectors.reason) },
     runAt: new Date().toISOString(),
   };
 }
